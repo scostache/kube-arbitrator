@@ -62,10 +62,12 @@ func defaultXQueueJobInformer(client *rest.RESTClient, resyncPeriod time.Duratio
 	return NewXQueueJobInformer(client, meta_v1.NamespaceAll, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 }
 
+//Informer 
 func (f *xqueueJobInformer) Informer() cache.SharedIndexInformer {
 	return f.factory.InformerFor(&arbv1.XQueueJob{}, defaultXQueueJobInformer)
 }
 
+//Lister 
 func (f *xqueueJobInformer) Lister() v1.XQueueJobLister {
 	return v1.NewXQueueJobLister(f.Informer().GetIndexer())
 }

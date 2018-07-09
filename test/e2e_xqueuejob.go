@@ -22,6 +22,7 @@ var _ = Describe("XQueueJob Plugin E2E Test", func() {
 		rep := clusterSize(context, oneCPU)
 
 		xqueueJob := createXQueueJob(context, "xqj-1", 2, rep, workerPriority, "busybox", oneCPU)
+
 		err := waitXJobCreated(context, xqueueJob.Name)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -43,6 +44,7 @@ var _ = Describe("XQueueJob Plugin E2E Test", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		xqueueJob2 := createXQueueJob(context, "xqj-2", 2, rep, workerPriority, "busybox", oneCPU)
+
 		err = waitXJobCreated(context, xqueueJob2.Name)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -61,6 +63,7 @@ var _ = Describe("XQueueJob Plugin E2E Test", func() {
 		err = deleteXQueueJob(context, "xqj-2")
 		Expect(err).NotTo(HaveOccurred())
 	})
+
 
 	It("XQueueJob Preemption", func() {
 		context := initTestContext()
@@ -100,4 +103,5 @@ var _ = Describe("XQueueJob Plugin E2E Test", func() {
 		err = waitXJobReady(context, qj1.Name, int(rep/2))
 		Expect(err).NotTo(HaveOccurred())
 	})
+
 })

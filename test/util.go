@@ -17,8 +17,6 @@ limitations under the License.
 package test
 
 import (
-	json2 "encoding/json"
-	"fmt"
 	. "github.com/onsi/gomega"
 	"os"
 	"path/filepath"
@@ -460,16 +458,15 @@ func taskReadyEx(ctx *context, jobName string, tss map[string]int32) wait.Condit
 	return func() (bool, error) {
 		queueJob, err := ctx.karclient.ArbV1().QueueJobs(ctx.namespace).Get(jobName, metav1.GetOptions{})
 		Expect(err).NotTo(HaveOccurred())
-
-		pods, err := ctx.kubeclient.CoreV1().Pods(ctx.namespace).List(metav1.ListOptions{})
-		Expect(err).NotTo(HaveOccurred())
-
 		var taskSpecs []arbv1.TaskSpec
 		for _, ts := range queueJob.Spec.TaskSpecs {
 			if _, found := tss[ts.Template.Name]; found {
 				taskSpecs = append(taskSpecs, ts)
 			}
 		}
+
+		pods, err := ctx.kubeclient.CoreV1().Pods(ctx.namespace).List(metav1.ListOptions{})
+		Expect(err).NotTo(HaveOccurred())
 
 		readyTaskNum := map[string]int32{}
 		for _, pod := range pods.Items {

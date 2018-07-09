@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
+
 func createXQueueJob(context *context, name string, min, rep int32, priority string, img string, req v1.ResourceList) *arbv1.XQueueJob {
 	queueJobName := "xqueuejob.arbitrator.k8s.io"
 
@@ -41,8 +42,10 @@ func createXQueueJob(context *context, name string, min, rep int32, priority str
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PodTemplate"},
 		Template: v1.PodTemplateSpec{
 			Spec: v1.PodSpec{
+
 				PriorityClassName: priority,
 				RestartPolicy:     v1.RestartPolicyNever,
+
 				Containers: []v1.Container{
 					{
 						Image:           img,

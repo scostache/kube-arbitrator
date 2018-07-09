@@ -40,6 +40,7 @@ import (
 const (
 	// QueueJobNameLabel label string for queuejob name
 	QueueJobNameLabel string = "xqueuejob-name"
+
 	// ControllerUIDLabel label string for queuejob controller uid
 	ControllerUIDLabel string = "controller-uid"
 )
@@ -51,6 +52,7 @@ var controllerKind = arbv1.SchemeGroupVersion.WithKind("XQueueJob")
 type XController struct {
 	config           *rest.Config
 	queueJobInformer informersv1.XQueueJobInformer
+
 	// resources registered for the XQueueJob
 	qjobRegisteredResources queuejobresources.RegisteredResources
 	// controllers for these resources
@@ -107,6 +109,8 @@ func NewXQueueJobController(config *rest.Config) *XController {
 	if err != nil {
 		panic(err)
 	}
+
+	cc.queueJobInformer = arbinformers.NewSharedInformerFactory(queueJobClient, 0).Batch().XQueueJobs()
 	cc.qjobResControls = map[arbv1.ResourceType]queuejobresources.Interface{}
 	RegisterAllQueueJobResourceTypes(&cc.qjobRegisteredResources)
 
@@ -122,7 +126,6 @@ func NewXQueueJobController(config *rest.Config) *XController {
 	}
 	cc.qjobResControls[arbv1.ResourceTypePod] = resControlPod
 
-	cc.queueJobInformer = arbinformers.NewSharedInformerFactory(queueJobClient, 0).XQueueJob().XQueueJobs()
 	cc.queueJobInformer.Informer().AddEventHandler(
 		cache.FilteringResourceEventHandler{
 			FilterFunc: func(obj interface{}) bool {
@@ -223,7 +226,9 @@ func (cc *XController) worker() {
 
 		// sync XQueueJob
 		if err := cc.syncQueueJob(queuejob); err != nil {
+
 			glog.Errorf("Failed to sync XQueueJob %s %s, err %#v", queuejob.Name, queuejob.Namespace, err)
+
 			// If any error, requeue it.
 			return err
 		}
@@ -249,9 +254,6 @@ func (cc *XController) syncQueueJob(qj *arbv1.XQueueJob) error {
 	return cc.manageQueueJob(queueJob)
 }
 
-// manageQueueJob is the core method responsible for managing the number of running
-// pods according to what is specified in the job.Spec.
-// Does NOT modify <activePods>.
 func (cc *XController) manageQueueJob(qj *arbv1.XQueueJob) error {
 	var err error
 	startTime := time.Now()
@@ -302,5 +304,6 @@ func (cc *XController) Cleanup(queuejob *arbv1.XQueueJob) error {
 			cc.qjobResControls[ar.Type].Cleanup(queuejob, &ar)
 		}
 	}
+
 	return nil
 }
