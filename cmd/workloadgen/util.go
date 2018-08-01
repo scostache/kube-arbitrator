@@ -23,7 +23,6 @@ import (
 
 	"k8s.io/api/core/v1"
 	appv1 "k8s.io/api/extensions/v1beta1"
-	schedv1 "k8s.io/api/scheduling/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -66,7 +65,7 @@ func initTestContext() *context {
 	
 	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(home, ".kube", "config"))
 	if err != nil {
-		panic()
+		panic(err)
 	}
 	
 	cxt.karclient = clientset.NewForConfigOrDie(config)
@@ -78,11 +77,9 @@ func initTestContext() *context {
 			Namespace: cxt.namespace,
 		},
 	})
-	
 	if err != nil {
-		panic()
+		panic(err)
 	}
-	
 	return cxt
 }
 
@@ -99,11 +96,10 @@ func namespaceNotExist(ctx *context) wait.ConditionFunc {
 func cleanupTestContext(cxt *context) {
 	err := cxt.kubeclient.CoreV1().Namespaces().Delete(cxt.namespace, &metav1.DeleteOptions{})
 	if err != nil {
-		panic()
+		panic(err)
 	}
 	// Wait for namespace deleted.
 	err = wait.Poll(100*time.Millisecond, oneMinute, namespaceNotExist(cxt))
-	Expect(err).NotTo(HaveOccurred())
 }
 
 type taskSpec struct {
@@ -165,12 +161,13 @@ func createQueueJobEx(context *context, name string, min int32, tss []taskSpec) 
 	}
 
 	queueJob, err := context.karclient.ArbV1().QueueJobs(context.namespace).Create(queueJob)
+	panic(err)
 
 	return queueJob
 }
 
 func createQueueJob(context *context, name string, min, rep int32, img string, req v1.ResourceList) *arbv1.QueueJob {
-	queueJobName := "queuejob.k8s.io"
+	 QueueJobLabel := "queuejob.kube-arbitrator.k8s.io"
 
 	queueJob := &arbv1.QueueJob{
 		ObjectMeta: metav1.ObjectMeta{
@@ -186,13 +183,13 @@ func createQueueJob(context *context, name string, min, rep int32, img string, r
 
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
-							queueJobName: name,
+							QueueJobLabel: name,
 						},
 					},
 					Replicas: rep,
 					Template: v1.PodTemplateSpec{
 						ObjectMeta: metav1.ObjectMeta{
-							Labels: map[string]string{queueJobName: name},
+							Labels: map[string]string{QueueJobLabel: name},
 						},
 						Spec: v1.PodSpec{
 							SchedulerName: "kar-scheduler",
@@ -215,6 +212,7 @@ func createQueueJob(context *context, name string, min, rep int32, img string, r
 	}
 
 	queueJob, err := context.karclient.ArbV1().QueueJobs(context.namespace).Create(queueJob)
+	panic(err)
 	
 	return queueJob
 }
@@ -264,13 +262,15 @@ func createQueueJobWithScheduler(context *context, scheduler string, name string
 		},
 	}
 	queueJob, err := context.karclient.ArbV1().QueueJobs(context.namespace).Create(queueJob)
+	panic(err)
 
 	return queueJob
 }
 
 
 func createReplicaSet(context *context, name string, rep int32, img string, req v1.ResourceList) *appv1.ReplicaSet {
-	deploymentName := "deployment.k8s.io"
+        RSJobLabel := "rs.kube-arbitrator.k8s.io"
+
 	deployment := &appv1.ReplicaSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -280,12 +280,12 @@ func createReplicaSet(context *context, name string, rep int32, img string, req 
 			Replicas: &rep,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					deploymentName: name,
+					RSJobLabel: name,
 				},
 			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{deploymentName: name},
+					Labels: map[string]string{RSJobLabel: name},
 				},
 				Spec: v1.PodSpec{
 					RestartPolicy: v1.RestartPolicyAlways,
@@ -304,7 +304,7 @@ func createReplicaSet(context *context, name string, rep int32, img string, req 
 		},
 	}
 	deployment, err := context.kubeclient.ExtensionsV1beta1().ReplicaSets(context.namespace).Create(deployment)
-	
+	panic(err)	
 	return deployment
 }
 
@@ -319,12 +319,12 @@ func taskReady(ctx *context, jobName string, taskNum int) wait.ConditionFunc {
 	return func() (bool, error) {
 		queueJob, err := ctx.karclient.ArbV1().QueueJobs(ctx.namespace).Get(jobName, metav1.GetOptions{})
 		if err != nil {
-			panic()
+			panic(err)
 		}
 
 		pods, err := ctx.kubeclient.CoreV1().Pods(ctx.namespace).List(metav1.ListOptions{})
 		if err != nil {
-			panic()
+			panic(err)
 		}
 
 		readyTaskNum := 0
@@ -353,12 +353,12 @@ func taskReadyEx(ctx *context, jobName string, tss map[string]int32) wait.Condit
 	return func() (bool, error) {
 		queueJob, err := ctx.karclient.ArbV1().QueueJobs(ctx.namespace).Get(jobName, metav1.GetOptions{})
 		if err != nil {
-			panic()
+			panic(err)
 		}
 
 		pods, err := ctx.kubeclient.CoreV1().Pods(ctx.namespace).List(metav1.ListOptions{})
 		if err != nil {
-			panic()
+			panic(err)
 		}
 
 		var taskSpecs []arbv1.TaskSpec
@@ -408,11 +408,11 @@ func jobNotReady(ctx *context, jobName string) wait.ConditionFunc {
 	return func() (bool, error) {
 		queueJob, err := ctx.karclient.ArbV1().QueueJobs(ctx.namespace).Get(jobName, metav1.GetOptions{})
 		if err != nil {
-			panic()
+			panic(err)
 		}
 		pods, err := ctx.kubeclient.CoreV1().Pods(ctx.namespace).List(metav1.ListOptions{})
 		if err != nil {
-			panic()
+			panic(err)
 		}
 
 		pendingTaskNum := int32(0)
@@ -446,12 +446,12 @@ func replicaSetReady(ctx *context, name string) wait.ConditionFunc {
 	return func() (bool, error) {
 		deployment, err := ctx.kubeclient.ExtensionsV1beta1().ReplicaSets(ctx.namespace).Get(name, metav1.GetOptions{})
 		if err != nil {
-			panic()
+			panic(err)
 		}
 
 		pods, err := ctx.kubeclient.CoreV1().Pods(ctx.namespace).List(metav1.ListOptions{})
 		if err != nil {
-			panic()
+			panic(err)
 		}
 
 		labelSelector := labels.SelectorFromSet(deployment.Spec.Selector.MatchLabels)
@@ -470,6 +470,33 @@ func replicaSetReady(ctx *context, name string) wait.ConditionFunc {
 	}
 }
 
+func listTasks(ctx *context, nJobs int) wait.ConditionFunc {
+        return func() (bool, error) {
+                jobs, err := ctx.karclient.ArbV1().QueueJobs(ctx.namespace).List(metav1.ListOptions{})
+                panic(err)
+
+                nJobs0 := len(jobs.Items)
+
+                return nJobs0 == nJobs, nil
+        }
+}
+
+func listQueueJobs(ctx *context, nJobs int) error {
+        return wait.Poll(100*time.Millisecond, longPoll, listTasks(ctx, nJobs))
+}
+
+func listReplicaSets(ctx *context, nJobs int) wait.ConditionFunc {
+        return func() (bool, error) {
+                jobs, err := ctx.kubeclient.AppsV1().ReplicaSets(ctx.namespace).List(metav1.ListOptions{})
+                panic(err)
+
+                nJobs0 := len(jobs.Items)
+
+                return nJobs0 == nJobs, nil
+        }
+}
+
+
 func waitReplicaSetReady(ctx *context, name string) error {
 	return wait.Poll(100*time.Millisecond, oneMinute, replicaSetReady(ctx, name))
 }
@@ -477,12 +504,12 @@ func waitReplicaSetReady(ctx *context, name string) error {
 func clusterSize(ctx *context, req v1.ResourceList) int32 {
 	nodes, err := ctx.kubeclient.CoreV1().Nodes().List(metav1.ListOptions{})
 	if err != nil {
-		panic()
+		panic(err)
 	}
 
 	pods, err := ctx.kubeclient.CoreV1().Pods("").List(metav1.ListOptions{})
 	if err != nil {
-		panic()
+		panic(err)
 	}
 
 	used := map[string]*arbapi.Resource{}

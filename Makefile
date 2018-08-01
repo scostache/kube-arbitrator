@@ -5,6 +5,7 @@ kube-arbitrator: init
 	go build -o ${BIN_DIR}/kar-scheduler ./cmd/kar-scheduler/
 	go build -o ${BIN_DIR}/kar-controllers ./cmd/kar-controllers/
 	go build -o ${BIN_DIR}/karcli ./cmd/karcli
+	go build -o ${BIN_DIR}/workloadgen ./cmd/workloadgen
 
 verify: generate-code
 	hack/verify-gofmt.sh

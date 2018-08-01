@@ -88,7 +88,7 @@ func initTestContext() *context {
 
 	_, err = cxt.kubeclient.SchedulingV1alpha1().PriorityClasses().Create(&schedv1.PriorityClass{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: masterPriority,
+			Name: workerPriority,
 		},
 		Value:         100,
 		GlobalDefault: false,
@@ -97,12 +97,13 @@ func initTestContext() *context {
 
 	_, err = cxt.kubeclient.SchedulingV1alpha1().PriorityClasses().Create(&schedv1.PriorityClass{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: workerPriority,
+			Name: masterPriority,
 		},
 		Value:         1,
 		GlobalDefault: false,
 	})
 	Expect(err).NotTo(HaveOccurred())
+
 
 	return cxt
 }
