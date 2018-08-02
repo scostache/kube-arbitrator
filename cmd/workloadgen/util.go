@@ -24,6 +24,8 @@ import (
 
 	"k8s.io/api/core/v1"
 	appv1 "k8s.io/api/extensions/v1beta1"
+	app1 "k8s.io/api/apps/v1"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,6 +45,9 @@ var oneCPU = v1.ResourceList{"cpu": resource.MustParse("1000m")}
 var twoCPU = v1.ResourceList{"cpu": resource.MustParse("2000m")}
 var threeCPU = v1.ResourceList{"cpu": resource.MustParse("3000m")}
 
+var oneMem = v1.ResourceList{"memory": resource.MustParse("1Gi")}
+
+var rsKind = appv1.SchemeGroupVersion.WithKind("ReplicaSet")
 
 func homeDir() string {
 	if h := os.Getenv("HOME"); h != "" {
@@ -278,9 +283,24 @@ func createQueueJobWithScheduler(context *context, scheduler string, name string
 	return queueJob
 }
 
+func createQueueJobSchedulingSpec(min int, name string, namespace string, controllerRef *metav1.OwnerReference) *arbv1.SchedulingSpec {
+	return &arbv1.SchedulingSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*controllerRef,
+			},
+		},
+		Spec: arbv1.SchedulingSpecTemplate {
+			MinAvailable: min,
+			},
+	}
+}
 
 func createReplicaSet(context *context, name string, rep int32, img string, scheduler string, req v1.ResourceList) *appv1.ReplicaSet {
         RSJobLabel := "rs.kube-arbitrator.k8s.io"
+	QueueJobLabel := "queuejob.kube-arbitrator.k8s.io"
 
 	deployment := &appv1.ReplicaSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -296,7 +316,7 @@ func createReplicaSet(context *context, name string, rep int32, img string, sche
 			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{RSJobLabel: name},
+					Labels: map[string]string{RSJobLabel: name, QueueJobLabel: name},
 				},
 				Spec: v1.PodSpec{
 					RestartPolicy: v1.RestartPolicyAlways,
@@ -315,11 +335,83 @@ func createReplicaSet(context *context, name string, rep int32, img string, sche
 			},
 		},
 	}
+
 	deployment, err := context.kubeclient.ExtensionsV1beta1().ReplicaSets(context.namespace).Create(deployment)
 	if err != nil {
 		panic(err)
-	}	
+	}
+
+	if scheduler == "kar-scheduler" {
+                // create schedSpec object ?
+        
+                schedSpec := createQueueJobSchedulingSpec(int(rep), name, context.namespace, metav1.NewControllerRef(deployment, rsKind))
+                _, err := context.karclient.ArbV1().SchedulingSpecs(context.namespace).Create(schedSpec)
+                if err != nil {
+                        fmt.Printf("Failed to create SchedulingSpec for RS %v/%v: %v",
+                                context.namespace, name, err)
+                        panic(err)
+                }
+        }
+	
 	return deployment
+}
+
+func createStatefulSet(context *context, name string, rep int32, img string, scheduler string, req v1.ResourceList) *app1.StatefulSet {
+        RSJobLabel := "rs.kube-arbitrator.k8s.io"
+        QueueJobLabel := "queuejob.kube-arbitrator.k8s.io"
+
+        deployment := &app1.StatefulSet{
+                ObjectMeta: metav1.ObjectMeta{
+                        Name:      name,
+                        Namespace: context.namespace,
+                },
+                Spec: app1.StatefulSetSpec{
+                        Replicas: &rep,
+                        Selector: &metav1.LabelSelector{
+                                MatchLabels: map[string]string{
+					"app" : name,
+                                },
+                        },
+                        Template: v1.PodTemplateSpec{
+                                ObjectMeta: metav1.ObjectMeta{
+                                        Labels: map[string]string{RSJobLabel: name, QueueJobLabel: name, "app": name},
+                                },
+                                Spec: v1.PodSpec{
+                                        RestartPolicy: v1.RestartPolicyAlways,
+                                        SchedulerName: scheduler,
+                                        Containers: []v1.Container{
+                                                {
+                                                        Image:           img,
+                                                        Name:            name,
+                                                        ImagePullPolicy: v1.PullIfNotPresent,
+                                                        Resources: v1.ResourceRequirements{
+                                                                Requests: req,
+                                                        },
+                                                },
+                                        },
+                                },
+                        },
+                },
+        }
+
+        deployment, err := context.kubeclient.AppsV1().StatefulSets(context.namespace).Create(deployment)
+        if err != nil {
+                panic(err)
+        }
+
+        if scheduler == "kar-scheduler" {
+                // create schedSpec object ?
+        
+                schedSpec := createQueueJobSchedulingSpec(int(rep), name, context.namespace, metav1.NewControllerRef(deployment, rsKind))
+                _, err := context.karclient.ArbV1().SchedulingSpecs(context.namespace).Create(schedSpec)
+                if err != nil {
+                        fmt.Printf("Failed to create SchedulingSpec for RS %v/%v: %v",
+                                context.namespace, name, err)
+                        panic(err)
+                }
+        }
+        
+        return deployment
 }
 
 func deleteReplicaSet(ctx *context, name string) error {
@@ -327,6 +419,13 @@ func deleteReplicaSet(ctx *context, name string) error {
 	return ctx.kubeclient.ExtensionsV1beta1().ReplicaSets(ctx.namespace).Delete(name, &metav1.DeleteOptions{
 		PropagationPolicy: &foreground,
 	})
+}
+
+func deleteStatefulSet(ctx *context, name string) error {
+        foreground := metav1.DeletePropagationForeground
+        return ctx.kubeclient.AppsV1().StatefulSets(ctx.namespace).Delete(name, &metav1.DeleteOptions{
+                PropagationPolicy: &foreground,
+        })
 }
 
 func taskReady(ctx *context, jobName string, taskNum int) wait.ConditionFunc {
