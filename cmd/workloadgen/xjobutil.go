@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package workloadgen
+package main
 
 import (
 	json2 "encoding/json"
@@ -30,7 +30,7 @@ import (
 
 var longPoll = 100*time.Minute
 
-func createXQueueJob(context *context, name string, min, rep int32, img string, req v1.ResourceList) *arbv1.XQueueJob {
+func createXQueueJob(context *context, name string, min, rep int32, img string, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
 	queueJobName := "xqueuejob.arbitrator.k8s.io"
 	cmd := make([]string, 0)
 	cmd = append(cmd, "sleep")
@@ -46,6 +46,7 @@ func createXQueueJob(context *context, name string, min, rep int32, img string, 
                         Labels: map[string]string{queueJobName: name},
                 	},
 			Spec: v1.PodSpec{
+				SchedulerName: scheduler,
 				RestartPolicy:     v1.RestartPolicyNever,
 				Containers: []v1.Container{
 					{

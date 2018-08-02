@@ -14,12 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package workloadgen
+package main
 
 import (
 	"os"
 	"path/filepath"
 	"time"
+	"fmt"
 
 	"k8s.io/api/core/v1"
 	appv1 "k8s.io/api/extensions/v1beta1"
@@ -67,7 +68,8 @@ func initTestContext() *context {
 	if err != nil {
 		panic(err)
 	}
-	
+
+	fmt.Printf("Building namespace %s\n", cxt.namespace)	
 	cxt.karclient = clientset.NewForConfigOrDie(config)
 	cxt.kubeclient = kubernetes.NewForConfigOrDie(config)
 
@@ -166,8 +168,13 @@ func createQueueJobEx(context *context, name string, min int32, tss []taskSpec) 
 	return queueJob
 }
 
-func createQueueJob(context *context, name string, min, rep int32, img string, req v1.ResourceList) *arbv1.QueueJob {
+func createQueueJob(context *context, name string, min, rep int32, img string, scheduler string, req v1.ResourceList) *arbv1.QueueJob {
 	 QueueJobLabel := "queuejob.kube-arbitrator.k8s.io"
+
+	command := make([]string,0)
+	args := make([]string,0)
+	command = append(command, "sleep")
+	args = append(args, "1000")
 
 	queueJob := &arbv1.QueueJob{
 		ObjectMeta: metav1.ObjectMeta{
@@ -192,12 +199,14 @@ func createQueueJob(context *context, name string, min, rep int32, img string, r
 							Labels: map[string]string{QueueJobLabel: name},
 						},
 						Spec: v1.PodSpec{
-							SchedulerName: "kar-scheduler",
+							SchedulerName: scheduler,
 							RestartPolicy: v1.RestartPolicyNever,
 							Containers: []v1.Container{
 								{
 									Image:           img,
 									Name:            name,
+									Command:	 command,
+									Args:		 args,
 									ImagePullPolicy: v1.PullIfNotPresent,
 									Resources: v1.ResourceRequirements{
 										Requests: req,
@@ -212,7 +221,9 @@ func createQueueJob(context *context, name string, min, rep int32, img string, r
 	}
 
 	queueJob, err := context.karclient.ArbV1().QueueJobs(context.namespace).Create(queueJob)
-	panic(err)
+	if err != nil{
+		panic(err)
+	}
 	
 	return queueJob
 }
@@ -268,7 +279,7 @@ func createQueueJobWithScheduler(context *context, scheduler string, name string
 }
 
 
-func createReplicaSet(context *context, name string, rep int32, img string, req v1.ResourceList) *appv1.ReplicaSet {
+func createReplicaSet(context *context, name string, rep int32, img string, scheduler string, req v1.ResourceList) *appv1.ReplicaSet {
         RSJobLabel := "rs.kube-arbitrator.k8s.io"
 
 	deployment := &appv1.ReplicaSet{
@@ -289,6 +300,7 @@ func createReplicaSet(context *context, name string, rep int32, img string, req 
 				},
 				Spec: v1.PodSpec{
 					RestartPolicy: v1.RestartPolicyAlways,
+					SchedulerName: scheduler,
 					Containers: []v1.Container{
 						{
 							Image:           img,
@@ -304,7 +316,9 @@ func createReplicaSet(context *context, name string, rep int32, img string, req 
 		},
 	}
 	deployment, err := context.kubeclient.ExtensionsV1beta1().ReplicaSets(context.namespace).Create(deployment)
-	panic(err)	
+	if err != nil {
+		panic(err)
+	}	
 	return deployment
 }
 
@@ -481,19 +495,47 @@ func listTasks(ctx *context, nJobs int) wait.ConditionFunc {
         }
 }
 
+func listCompletedTasks(ctx *context, nJobs int) wait.ConditionFunc {
+        return func() (bool, error) {
+                jobs, err := ctx.karclient.ArbV1().QueueJobs(ctx.namespace).List(metav1.ListOptions{})
+                if err != nil {
+			panic(err)
+		}
+
+		ncompleted := 0
+		for _, qj := range jobs.Items {
+			if int(qj.Status.Succeeded) >= qj.Spec.SchedSpec.MinAvailable {
+				ncompleted = ncompleted + 1
+			}
+		}
+
+                return ncompleted == nJobs, nil
+        }
+}
+
 func listQueueJobs(ctx *context, nJobs int) error {
         return wait.Poll(100*time.Millisecond, longPoll, listTasks(ctx, nJobs))
 }
 
-func listReplicaSets(ctx *context, nJobs int) wait.ConditionFunc {
+func listCompletedQueueJobs(ctx *context, nJobs int) error {
+        return wait.Poll(100*time.Millisecond, longPoll, listCompletedTasks(ctx, nJobs))
+}
+
+func listRSTasks(ctx *context, nJobs int) wait.ConditionFunc {
         return func() (bool, error) {
                 jobs, err := ctx.kubeclient.AppsV1().ReplicaSets(ctx.namespace).List(metav1.ListOptions{})
-                panic(err)
+                if err != nil {
+			panic(err)
+		}
 
                 nJobs0 := len(jobs.Items)
 
                 return nJobs0 == nJobs, nil
         }
+}
+
+func listReplicaSets(ctx *context, nJobs int) error {
+        return wait.Poll(100*time.Millisecond, longPoll, listRSTasks(ctx, nJobs))
 }
 
 
