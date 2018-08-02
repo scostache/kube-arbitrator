@@ -324,6 +324,7 @@ func main() {
 	scheduler := flag.String("scheduler", "", "the scheduler name to use for the jobs")
 	master := flag.String("master", "", "The address of the Kubernetes API server (overrides any value in kubeconfig)")
 	kubeconfig := flag.String("kubeconfig", "/root/.kube/config", "Path to kubeconfig file with authorization and master location information.")
+	maxlearners := flag.Int("number", 4, "max number of workers a job will have")
 
 	flag.Parse()
 	
@@ -359,10 +360,10 @@ func main() {
 
 	for i := 0; i < *number; i++ {
 		name := fmt.Sprintf("qj-%v", i)
-		nreplicas := 2
+		nreplicas := *maxlearners
 		// for heterogeneous load
 		if *workloadtype == 1 {
-			nreplicas = rand.Intn(4)
+			nreplicas = rand.Intn(nreplicas)
 		}
 		
 		if *duration > -1 {
