@@ -31,10 +31,10 @@ import (
 var longPoll = 100*time.Minute
 
 func createXQueueJob(context *context, name string, min, rep int32, img string, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
-	queueJobName := "xqueuejob.arbitrator.k8s.io"
+	queueJobName := "xqueuejob.kube-arbitrator.k8s.io"
 	cmd := make([]string, 0)
 	cmd = append(cmd, "sleep")
-	cmd = append(cmd, "10")
+	cmd = append(cmd, "10000")
 
 	podTemplate := v1.PodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
@@ -59,7 +59,8 @@ func createXQueueJob(context *context, name string, min, rep int32, img string, 
 						},
 					},
 				},
-			}},
+			},
+			},
 	}
 
 	pods := make([]arbv1.XQueueJobResource, 0)
@@ -106,10 +107,16 @@ func createXQueueJob(context *context, name string, min, rep int32, img string, 
 				Items: pods,
 			},
 		},
+		Status: arbv1.XQueueJobStatus{
+			CanRun: false,
+			State: arbv1.QueueJobStateEnqueued,
+		},
 	}
 
 	queueJob, err2 := context.karclient.ArbV1().XQueueJobs(context.namespace).Create(queueJob)
-	Expect(err2).NotTo(HaveOccurred())
+	if err2 != nil {
+		fmt.Printf("Error is: %v", err2)
+	}
 
 	return queueJob
 }

@@ -174,20 +174,11 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
 	fmt.Printf("Checking any jobs to delete \n")
 	for name, job := range qjrPod.QJRunning {
 		 _, ok := qjrPod.Deleted[name]
-		if job.Completion >= ctime && !ok {
+		if ctime - job.Completion > 0 && job.Completion > 0 && !ok {
 			var err error
-			fmt.Printf("Deleting QJ Job %s \n", name)
-			if qjrPod.workloadtype == "replica" {
-				err  = qjrPod.clients.ExtensionsV1beta1().ReplicaSets(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
-			}
-			if qjrPod.workloadtype == "statefulset" {
-                        	err  = qjrPod.clients.AppsV1().StatefulSets(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
-                        }
+			fmt.Printf("%v Deleting QJ Job %s \n", ctime, name)
 			if qjrPod.workloadtype == "qj" {
 				err = qjrPod.arbclients.ArbV1().QueueJobs(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
-			}
-			if qjrPod.workloadtype == "xqj" {
-				err = qjrPod.arbclients.ArbV1().XQueueJobs(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
 			}
 			if err == nil {
 				qjrPod.Deleted[name] = true
@@ -201,23 +192,16 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
 
 	for name, job := range qjrPod.RSRunning {
                  _, ok := qjrPod.Deleted[name]
-                if job.Completion >= ctime && !ok {
+                if ctime - job.Completion > 0 && job.Completion > 0 && !ok {
                         var err error
-                        fmt.Printf("Deleting RS Job %s \n", name)
                         if qjrPod.workloadtype == "replica" {
 			foreground := metav1.DeletePropagationForeground
-			fmt.Printf("Deleting RS %s \n", name)
+			fmt.Printf("%v Deleting RS %s \n", ctime, name)
                         err  = qjrPod.clients.ExtensionsV1beta1().ReplicaSets(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{PropagationPolicy: &foreground,
 				})
                         }
                         if qjrPod.workloadtype == "statefulset" {
                         err  = qjrPod.clients.AppsV1().StatefulSets(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
-                        }
-                        if qjrPod.workloadtype == "qj" {
-                        err = qjrPod.arbclients.ArbV1().QueueJobs(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
-                        }
-                        if qjrPod.workloadtype == "xqj" {
-                        err = qjrPod.arbclients.ArbV1().XQueueJobs(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
                         }
                         if err == nil {
                                 qjrPod.Deleted[name] = true
@@ -229,6 +213,25 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
                 }
         }
 
+	for name, job := range qjrPod.XQJRunning {
+                 _, ok := qjrPod.Deleted[name]
+                if ctime - job.Completion > 0 && job.Completion > 0 && !ok {
+                        var err error
+                        fmt.Printf("%v Deleting XQJ Job %s Completed at %v \n", ctime, name, job.Completion )
+                        if qjrPod.workloadtype == "xqj" {
+                                err = qjrPod.arbclients.ArbV1().XQueueJobs(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
+                        }
+			if err == nil {
+                                qjrPod.Deleted[name] = true
+                                qjrPod.DeletedCount = qjrPod.DeletedCount + 1
+                        }
+                        if err != nil {
+                                fmt.Printf("%+v\n", err)
+                        }
+                }
+        }
+
+
 }
 
 func (qjrPod *GeneratorStats) UtilizationSnapshot() {
@@ -238,8 +241,29 @@ func (qjrPod *GeneratorStats) UtilizationSnapshot() {
 	alloc := qjrPod.Allocated
 	capacity := qjrPod.Capacity 
 
+	actualAllocated := 0
+	for name,job := range qjrPod.QJRunning {
+		_, ok := qjrPod.Deleted[name]
+		if job.Completion > 0 && !ok {
+			actualAllocated = actualAllocated + qjrPod.QJState[name].Actual
+		}
+	}
+	for name,job := range qjrPod.XQJRunning {
+                _, ok := qjrPod.Deleted[name]
+                if job.Completion > 0 && !ok {
+                        actualAllocated = actualAllocated + qjrPod.XQJState[name].Actual
+                }
+        }
+	for name,job := range qjrPod.RSRunning {
+                _, ok := qjrPod.Deleted[name]
+                if job.Completion > 0 && !ok {
+                        actualAllocated = actualAllocated + qjrPod.RSState[name].Actual
+                }
+        }
+
+
 	util := float64(alloc)/float64(capacity)
-	fmt.Printf("%v Cluster utilization: %v Allocated %v Capacity %v \n", time.Now().Unix(), util, alloc, capacity)
+	fmt.Printf("%v Cluster utilization: %v Allocated %v Real %v Capacity %v \n", time.Now().Unix(), util, alloc, actualAllocated, capacity)
 }
 
 
@@ -311,7 +335,7 @@ func (qjrPod *GeneratorStats) updatePod(old, obj interface{}) {
                         if qjrPod.XQJState[name].Actual >= qjrPod.XQJState[name].Min {
                                 qjrPod.XQJRunning[name].Running = time.Now().Unix()
 				qjrPod.XQJRunning[name].Completion = time.Now().Unix() + TimeInterval
-                        	fmt.Printf("XQueuejob %s is running - requested pods: %v\n", name, qjrPod.XQJState[name].Actual)
+                        	fmt.Printf("XQueuejob %s is running - requested pods: %v started running at: %v completion at: %v\n", name, qjrPod.XQJState[name].Actual, qjrPod.XQJRunning[name].Running, qjrPod.XQJRunning[name].Completion)
 			}
                 }
         }
