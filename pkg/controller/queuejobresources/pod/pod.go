@@ -317,6 +317,7 @@ func (qjrPod *QueueJobResPod) manageQueueJob(qj *arbv1.XQueueJob, pods []*v1.Pod
 	}
 
 	old_flag := qj.Status.CanRun
+	old_state := qj.Status.State
 	qj.Status = arbv1.XQueueJobStatus{
 		Pending:      pending,
 		Running:      running,
@@ -325,6 +326,7 @@ func (qjrPod *QueueJobResPod) manageQueueJob(qj *arbv1.XQueueJob, pods []*v1.Pod
 		MinAvailable: int32(qj.Spec.SchedSpec.MinAvailable),
 	}
 
+	qj.Status.State = old_state
 	qj.Status.CanRun = old_flag
 
 	return err

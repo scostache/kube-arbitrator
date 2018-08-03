@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"time"
 	"fmt"
-
+	"strconv"
 	"k8s.io/api/core/v1"
 	appv1 "k8s.io/api/extensions/v1beta1"
 	app1 "k8s.io/api/apps/v1"
@@ -201,7 +201,7 @@ func createQueueJob(context *context, name string, min, rep int32, img string, s
 					Replicas: rep,
 					Template: v1.PodTemplateSpec{
 						ObjectMeta: metav1.ObjectMeta{
-							Labels: map[string]string{QueueJobLabel: name},
+							Labels: map[string]string{QueueJobLabel: name, "app": name, "size": strconv.Itoa(int(rep))},
 						},
 						Spec: v1.PodSpec{
 							SchedulerName: scheduler,
@@ -316,7 +316,7 @@ func createReplicaSet(context *context, name string, rep int32, img string, sche
 			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{RSJobLabel: name, QueueJobLabel: name},
+					Labels: map[string]string{RSJobLabel: name, QueueJobLabel: name, "app": name, "size": strconv.Itoa(int(rep))},
 				},
 				Spec: v1.PodSpec{
 					RestartPolicy: v1.RestartPolicyAlways,
@@ -374,7 +374,7 @@ func createStatefulSet(context *context, name string, rep int32, img string, sch
                         },
                         Template: v1.PodTemplateSpec{
                                 ObjectMeta: metav1.ObjectMeta{
-                                        Labels: map[string]string{RSJobLabel: name, QueueJobLabel: name, "app": name},
+                                        Labels: map[string]string{RSJobLabel: name, QueueJobLabel: name, "app": name, "size": strconv.Itoa(int(rep))},
                                 },
                                 Spec: v1.PodSpec{
                                         RestartPolicy: v1.RestartPolicyAlways,

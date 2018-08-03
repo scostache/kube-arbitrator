@@ -445,6 +445,8 @@ func (cc *XController) addQueueJob(obj interface{}) {
 		return
 	}
 
+	 glog.Infof("###METRICS %v Adding QueueJob to cache %s", time.Now().Unix(), qj.Name)
+
 	cc.enqueue(qj)
 }
 
@@ -586,6 +588,7 @@ func (cc *XController) manageQueueJob(qj *arbv1.XQueueJob) error {
 	
 	if qj.Status.CanRun && qj.Status.State != arbv1.QueueJobStateActive {
 		qj.Status.State =  arbv1.QueueJobStateActive
+		 glog.Infof("###METRICS %v Starting QueueJob %s", time.Now().Unix(), qj.Name)
 	}
 	
 	if qj.Spec.AggrResources.Items != nil {

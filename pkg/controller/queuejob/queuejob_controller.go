@@ -126,6 +126,8 @@ func (cc *Controller) addQueueJob(obj interface{}) {
 		return
 	}
 
+	glog.Infof("###METRICS %v Adding QueueJob to cache %s", time.Now().Unix(), qj.Name)
+
 	cc.enqueue(qj)
 }
 
@@ -365,6 +367,10 @@ func (cc *Controller) manageQueueJob(qj *arbv1.QueueJob, pods map[string][]*v1.P
 
 		// Create pod if necessary
 		if diff := replicas - pending - running - succeeded; diff > 0 {
+
+			if running == 0 {
+				glog.Infof("####METRICS %v Starting QueueJob %s", time.Now().Unix(), qj.Name)
+			}
 			glog.V(3).Infof("Try to create %v Pods for QueueJob %v/%v", diff, qj.Namespace, qj.Name)
 
 			var errs []error

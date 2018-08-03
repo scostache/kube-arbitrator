@@ -18,7 +18,7 @@ import (
 	"fmt"
 	. "github.com/onsi/gomega"
 	"time"
-
+	"strconv"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	arbv1 "github.com/kubernetes-incubator/kube-arbitrator/pkg/apis/v1alpha1"
@@ -43,7 +43,7 @@ func createXQueueJob(context *context, name string, min, rep int32, img string, 
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PodTemplate"},
 		Template: v1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
-                        Labels: map[string]string{queueJobName: name},
+                        Labels: map[string]string{queueJobName: name, "app": name, "size": strconv.Itoa(int(rep))},
                 	},
 			Spec: v1.PodSpec{
 				SchedulerName: scheduler,
