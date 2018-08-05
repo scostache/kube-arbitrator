@@ -43,11 +43,21 @@ const (
 	// QueueJobLabel label string for queuejob name
 	QueueJobLabel string = "queuejob.kube-arbitrator.k8s.io"
 	XQueueJobLabel string = "xqueuejob.kube-arbitrator.k8s.io"
-	RSJobLabel string = "rs.kube-arbitrator.k8s.io"
-
-	// 10 seconds per job
-	TimeInterval int64 = 160
+	RSJobLabel string = "rs.kube-arbitrator.k8s.io" // used for replica sets, stateful sets
 )
+
+type GeneratorConfig struct {
+	TimeInterval int64 // max duration a job will have (seconds)
+	MaxLearners int  // max number of workers a job will have
+	Scheduler   string // scheduler to use
+	SetType     string // type of workload replica|ss|qj|xqj
+	Number	    int    // number of jobs to generate
+        Duration    int    // arrival rate; -1 for burst of jobs
+        WorkloadType int   // type of workload: 1 - heterogeneous, 0 - homogeneous
+	Namespace string   // namespace in which the workload will run
+
+	Capacity   int64
+}
 
 type TimeStats struct {
 	Start int64
@@ -61,6 +71,9 @@ type Size struct {
 }
 
 type GeneratorStats struct {
+	gconfig *GeneratorConfig
+
+	// TODO - make one structure for all types instead of keeping separate ones
 	// QJ name and number of pods running
 	QJState map[string]*Size
 	// RS name and number of pods running
@@ -69,8 +82,6 @@ type GeneratorStats struct {
 	XQJState map[string]*Size
 	// node and nb of slots allocated
 	Allocated int64
-
-	Capacity int64
 
 	TimeStatsLock *sync.Mutex
 
@@ -88,12 +99,6 @@ type GeneratorStats struct {
 
 	allocmutex *sync.Mutex
 
-	workloadtype string
-
-	workloadnamespace string
-
-        // A TTLCache of pod creates/deletes each rc expects to see
-
         // A store of pods, populated by the podController
         podStore    corelisters.PodLister
         podInformer corev1informer.PodInformer
@@ -101,13 +106,13 @@ type GeneratorStats struct {
         podSynced func() bool
 }
 
-func NewGeneratorStats(config *rest.Config, csize int32, wtype string, namespace string) *GeneratorStats {
+func NewGeneratorStats(config *rest.Config, gconfig *GeneratorConfig) *GeneratorStats {
 	genstats := &GeneratorStats {
+		gconfig: gconfig,
 		QJState: make(map[string]*Size),
 		RSState: make(map[string]*Size),
 		XQJState: make(map[string]*Size),
 		Allocated: 0,
-		Capacity: int64(csize),
 		allocmutex: &sync.Mutex{},
 		TimeStatsLock : &sync.Mutex{},
 		Deleted: make(map[string]bool),
@@ -117,8 +122,6 @@ func NewGeneratorStats(config *rest.Config, csize int32, wtype string, namespace
 		XQJRunning: make(map[string]*TimeStats),
 		clients:            kubernetes.NewForConfigOrDie(config),
                 arbclients:         clientset.NewForConfigOrDie(config),
-		workloadtype: wtype,
-		workloadnamespace: namespace,
 	}
 
         // create informer for pod information
@@ -177,8 +180,9 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
 		if ctime - job.Completion > 0 && job.Completion > 0 && !ok {
 			var err error
 			fmt.Printf("%v Deleting QJ Job %s \n", ctime, name)
-			if qjrPod.workloadtype == "qj" {
-				err = qjrPod.arbclients.ArbV1().QueueJobs(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
+			if qjrPod.gconfig.SetType == "qj" {
+				foreground := metav1.DeletePropagationForeground
+				err = qjrPod.arbclients.ArbV1().QueueJobs(qjrPod.gconfig.Namespace).Delete(name, &metav1.DeleteOptions{PropagationPolicy: &foreground})
 			}
 			if err == nil {
 				qjrPod.Deleted[name] = true
@@ -194,14 +198,13 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
                  _, ok := qjrPod.Deleted[name]
                 if ctime - job.Completion > 0 && job.Completion > 0 && !ok {
                         var err error
-                        if qjrPod.workloadtype == "replica" {
+                        if qjrPod.gconfig.SetType == "replica" {
 			foreground := metav1.DeletePropagationForeground
-			fmt.Printf("%v Deleting RS %s \n", ctime, name)
-                        err  = qjrPod.clients.ExtensionsV1beta1().ReplicaSets(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{PropagationPolicy: &foreground,
-				})
+			fmt.Printf("%v Deleting RS %s Completed at %v\n", ctime, name, job.Completion)
+                        err  = qjrPod.clients.ExtensionsV1beta1().ReplicaSets(qjrPod.gconfig.Namespace).Delete(name, &metav1.DeleteOptions{PropagationPolicy: &foreground})
                         }
-                        if qjrPod.workloadtype == "statefulset" {
-                        err  = qjrPod.clients.AppsV1().StatefulSets(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
+                        if qjrPod.gconfig.SetType == "statefulset" {
+                        err  = qjrPod.clients.AppsV1().StatefulSets(qjrPod.gconfig.Namespace).Delete(name, &metav1.DeleteOptions{})
                         }
                         if err == nil {
                                 qjrPod.Deleted[name] = true
@@ -218,8 +221,8 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
                 if ctime - job.Completion > 0 && job.Completion > 0 && !ok {
                         var err error
                         fmt.Printf("%v Deleting XQJ Job %s Completed at %v \n", ctime, name, job.Completion )
-                        if qjrPod.workloadtype == "xqj" {
-                                err = qjrPod.arbclients.ArbV1().XQueueJobs(qjrPod.workloadnamespace).Delete(name, &metav1.DeleteOptions{})
+                        if qjrPod.gconfig.SetType == "xqj" {
+                                err = qjrPod.arbclients.ArbV1().XQueueJobs(qjrPod.gconfig.Namespace).Delete(name, &metav1.DeleteOptions{})
                         }
 			if err == nil {
                                 qjrPod.Deleted[name] = true
@@ -239,7 +242,7 @@ func (qjrPod *GeneratorStats) UtilizationSnapshot() {
         defer qjrPod.allocmutex.Unlock()
 
 	alloc := qjrPod.Allocated
-	capacity := qjrPod.Capacity 
+	capacity := qjrPod.gconfig.Capacity 
 
 	actualAllocated := 0
 	for name,job := range qjrPod.QJRunning {
@@ -314,40 +317,40 @@ func (qjrPod *GeneratorStats) updatePod(old, obj interface{}) {
         defer qjrPod.TimeStatsLock.Unlock()
 
         // update running pod counter for a QueueJob
-        if len(pod.Labels) != 0 && len(pod.Labels[QueueJobLabel]) > 0 && qjrPod.workloadtype == "qj" {
+        if len(pod.Labels) != 0 && len(pod.Labels[QueueJobLabel]) > 0 && qjrPod.gconfig.SetType == "qj" {
         	if oldpod.Status.Phase != pod.Status.Phase && pod.Status.Phase == v1.PodRunning{
 			qjrPod.UpdateAllocated()
 			name := pod.Labels[QueueJobLabel]
 			qjrPod.QJState[name].Actual = qjrPod.QJState[name].Actual + 1
 			if qjrPod.QJState[name].Actual >= qjrPod.QJState[name].Min {
 				qjrPod.QJRunning[name].Running = time.Now().Unix()
-				qjrPod.QJRunning[name].Completion = time.Now().Unix() + TimeInterval 
+				qjrPod.QJRunning[name].Completion = time.Now().Unix() + qjrPod.gconfig.TimeInterval 
 				fmt.Printf("Queuejob %s is running - requested pods: %v\n", name, qjrPod.QJState[name].Actual)
 			}
 		}
 	}
 
-	if len(pod.Labels) != 0 && len(pod.Labels[XQueueJobLabel]) > 0 && qjrPod.workloadtype == "xqj" {
+	if len(pod.Labels) != 0 && len(pod.Labels[XQueueJobLabel]) > 0 && qjrPod.gconfig.SetType == "xqj" {
                 if oldpod.Status.Phase != pod.Status.Phase && pod.Status.Phase == v1.PodRunning{
                         qjrPod.UpdateAllocated()
 			name := pod.Labels[XQueueJobLabel]
                         qjrPod.XQJState[name].Actual = qjrPod.XQJState[name].Actual + 1
                         if qjrPod.XQJState[name].Actual >= qjrPod.XQJState[name].Min {
                                 qjrPod.XQJRunning[name].Running = time.Now().Unix()
-				qjrPod.XQJRunning[name].Completion = time.Now().Unix() + TimeInterval
+				qjrPod.XQJRunning[name].Completion = time.Now().Unix() + qjrPod.gconfig.TimeInterval
                         	fmt.Printf("XQueuejob %s is running - requested pods: %v started running at: %v completion at: %v\n", name, qjrPod.XQJState[name].Actual, qjrPod.XQJRunning[name].Running, qjrPod.XQJRunning[name].Completion)
 			}
                 }
         }
 
-	if len(pod.Labels) != 0 && len(pod.Labels[RSJobLabel]) > 0 && (qjrPod.workloadtype == "replica" || qjrPod.workloadtype == "statefulset") {
+	if len(pod.Labels) != 0 && len(pod.Labels[RSJobLabel]) > 0 && (qjrPod.gconfig.SetType == "replica" || qjrPod.gconfig.SetType == "statefulset") {
                 if oldpod.Status.Phase != pod.Status.Phase && pod.Status.Phase == v1.PodRunning{
                         qjrPod.UpdateAllocated()
 			name := pod.Labels[RSJobLabel]
                         qjrPod.RSState[name].Actual = qjrPod.RSState[name].Actual + 1
                         if qjrPod.RSState[name].Actual >= qjrPod.RSState[name].Min {
                                 qjrPod.RSRunning[name].Running = time.Now().Unix()
-				qjrPod.RSRunning[name].Completion = time.Now().Unix() + TimeInterval
+				qjrPod.RSRunning[name].Completion = time.Now().Unix() + qjrPod.gconfig.TimeInterval
                         	fmt.Printf("RS %s is running - requested pods: %v\n", name, qjrPod.RSState[name].Actual)
 			}
                 }
@@ -389,17 +392,18 @@ func (qjrPod *GeneratorStats) deletePod(obj interface{}) {
 
 func main() {
 	workloadtype := flag.Int("type", 0, "type of workload to run: 1 means heterogeneous and 0 means homogeneous")
-	duration := flag.Int("load", -1, "target load we want to reach; -1 means a single burst of jobs")
+	duration := flag.Int("rate", -1, "mean arrival rate of the jobs (jobs/second); -1 means a single burst of jobs")
 	number := flag.Int("number", 100, "number of jobs to generate")
-	settype := flag.String("settype", "replica", "type of set to create")
+	settype := flag.String("settype", "replica", "type of set to create replica|ss|qj|xqj")
 	scheduler := flag.String("scheduler", "kar-scheduler", "the scheduler name to use for the jobs")
 	master := flag.String("master", "", "The address of the Kubernetes API server (overrides any value in kubeconfig)")
 	kubeconfig := flag.String("kubeconfig", "/root/.kube/config", "Path to kubeconfig file with authorization and master location information.")
 	maxlearners := flag.Int("nworker", 4, "max number of workers a job will have")
+	timeInterval := flag.Int("runtime", 180, "max duration a job will have (seconds)")
 
 	flag.Parse()
-	
-	fmt.Printf("Workloadtype=%v load=%v number of jobs=%v Set Type=%v \n", *workloadtype, *duration, *number, *settype)
+
+	fmt.Printf("Workloadtype=%v load=%v number of jobs=%v Set Type=%v scheduler %s\n", *workloadtype, *duration, *number, *settype, *scheduler)
 	
 	config, err := buildConfig(*master, *kubeconfig)
 	if err != nil {
@@ -410,7 +414,6 @@ func main() {
 	context := initTestContext()
 	defer cleanupTestContext(context)
 	slot := oneMem //oneCPU
-	// generate arrival rate to keep the load to target 
 	// arrival rate = exponential distribution
 	// l = util/service time, where util = number of occupied slots/capacity of slots ?
 	// exponential with mean = 1/l ; I want l = x/minute; 
@@ -420,26 +423,34 @@ func main() {
 	rep := clusterSize(context, oneCPU)
 	fmt.Printf("Cluster capacity: %v \n", rep)
 
-	genstats := NewGeneratorStats(config, clusterSize(context, oneCPU), *settype, "workload")
+	gconfig := &GeneratorConfig {
+        		TimeInterval: int64(*timeInterval),
+			Scheduler: *scheduler,
+			Capacity: int64(rep),
+			Namespace: "workload",
+			MaxLearners: *maxlearners,
+			SetType: *settype,
+			Number: *number,
+			Duration: *duration,
+			WorkloadType: *workloadtype,
+
+                }
+
+	genstats := NewGeneratorStats(config, gconfig)
         genstats.Run(neverStop)
 
-	lambda := 0.0
-	if *duration > -1 {
-		lambda = float64(*duration)/float64((60/(2*10)))
-	}
 	ctime := time.Now().Unix()
 
 	for i := 0; i < *number; i++ {
 		name := fmt.Sprintf("qj-%v", i)
 		nreplicas := *maxlearners
-		// for heterogeneous load
+		// for heterogeneous load - uniform load
 		if *workloadtype == 1 {
 			nreplicas = rand.Intn(nreplicas)
 		}
 		
 		if *duration > -1 {
-			lambda = float64(*duration)/float64(60/(nreplicas*int(TimeInterval)))
-			nextarr := rand.ExpFloat64()/lambda
+			nextarr := rand.ExpFloat64()/float64(*duration)
 			time.Sleep(time.Duration(nextarr)*time.Second)
 		}
 		
@@ -496,15 +507,6 @@ func main() {
 		time.Sleep(2*time.Second)
 	}
 
-	//if *settype == "xqj" {
-	//	listXQueueJobs(context, 0)
-	//}
-	//if *settype == "qj" {
-	//	listCompletedQueueJobs(context, *number)
-	//}
-	//if *settype == "replica" {
-	//	listReplicaSets(context, 0)
-	//}
 	// wait all jobs to finish
 	ftime := time.Now().Unix()
 	diff := ftime - ctime
@@ -520,7 +522,7 @@ func main() {
         	total_wait = total_wait + int(stats.Running - stats.Start)
 	}
 	for name, stats := range genstats.RSRunning {
-                fmt.Printf("XQJ: %s Delay: %v\n", name, stats.Running - stats.Start)
+                fmt.Printf("RS/SS: %s Delay: %v\n", name, stats.Running - stats.Start)
         	total_wait = total_wait + int(stats.Running - stats.Start)
 	}
 	fmt.Printf("Total wait time: %v", total_wait)

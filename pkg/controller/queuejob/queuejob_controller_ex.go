@@ -344,6 +344,7 @@ func (qjm *XController) ScheduleNext() {
 	// check if we have enough compute resources for it 
 	// if we have enough compute resources then we set the AllocatedReplicas to the total
 	// amount of resources asked by the job
+	for {
 	glog.Infof("=======Schedule Next QueueJob!!!=======")
 	qj, err := qjm.qjqueue.Pop()
 	if err != nil {
@@ -359,14 +360,14 @@ func (qjm *XController) ScheduleNext() {
 	glog.Infof("I have QueueJob with resources %v to be scheduled on aggregated idle resources %v", aggqj, resources)
 
 	if qj.Status.CanRun {
-		return
+		continue
 	}
 	
 	if aggqj.LessEqual(resources) {
 		// qj is ready to go!
 		newjob, e := qjm.queueJobLister.XQueueJobs(qj.Namespace).Get(qj.Name)
 		if e != nil {
-			return
+			continue
 		}
 		desired := int32(0)
 		for i, ar := range newjob.Spec.AggrResources.Items {
@@ -383,7 +384,7 @@ func (qjm *XController) ScheduleNext() {
 		// start thread to backoff
 		go qjm.backoff(qj)
 	}
-	
+	}
 }
 
 func (qjm *XController) backoff(q *arbv1.XQueueJob) {
@@ -409,7 +410,7 @@ func (cc *XController) Run(stopCh chan struct{}) {
 
 	cc.cache.Run(stopCh)
 
-	go wait.Until(cc.ScheduleNext, 2*time.Second, stopCh)
+	go cc.ScheduleNext()
 	// start preempt thread based on preemption of pods
 
 	// TODO - scheduleNext...Job....
