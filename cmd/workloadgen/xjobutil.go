@@ -20,7 +20,8 @@ import (
 	"time"
 	"strconv"
 	"k8s.io/apimachinery/pkg/runtime"
-
+	appv1 "k8s.io/api/extensions/v1beta1"
+	app1 "k8s.io/api/apps/v1"
 	arbv1 "github.com/kubernetes-incubator/kube-arbitrator/pkg/apis/v1alpha1"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,8 +31,11 @@ import (
 
 var longPoll = 100*time.Minute
 
+const (
+	queueJobName = "xqueuejob.kube-arbitrator.k8s.io"
+)
+
 func createXQueueJob(context *context, name string, min, rep int32, img string, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
-	queueJobName := "xqueuejob.kube-arbitrator.k8s.io"
 	cmd := make([]string, 0)
 	cmd = append(cmd, "sleep")
 	cmd = append(cmd, "10000")
@@ -119,6 +123,199 @@ func createXQueueJob(context *context, name string, min, rep int32, img string, 
 	}
 
 	return queueJob
+}
+
+func createXQueueJobwithStatefulSet(context *context, name string, min, rep int32, img string, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
+	cmd := make([]string, 0)
+        cmd = append(cmd, "sleep")
+        cmd = append(cmd, "10000")
+
+	deployment := &app1.StatefulSet{
+                ObjectMeta: metav1.ObjectMeta{
+                        Name:      name,
+                        Namespace: context.namespace,
+                },
+                Spec: app1.StatefulSetSpec{
+                        Replicas: &rep,
+                        Selector: &metav1.LabelSelector{
+                                MatchLabels: map[string]string{
+                                        "app" : name,
+                                },
+                        },
+                        Template: v1.PodTemplateSpec{
+                                ObjectMeta: metav1.ObjectMeta{
+                                        Labels: map[string]string{RSJobLabel: name, XQueueJobLabel: name, "app": name, "size": strconv.Itoa(int(rep))},
+                                },
+                                Spec: v1.PodSpec{
+                                        RestartPolicy: v1.RestartPolicyAlways,
+                                        SchedulerName: scheduler,
+                                        Containers: []v1.Container{
+                                                {
+                                                        Image:           img,
+                                                        Name:            name,
+							Command:	 cmd,
+                                                        ImagePullPolicy: v1.PullIfNotPresent,
+                                                        Resources: v1.ResourceRequirements{
+                                                                Requests: req,
+                                                        },
+                                                },
+                                        },
+                                },
+                        },
+                },
+        }
+
+	resources := make([]arbv1.XQueueJobResource, 0)
+
+	data, err := json2.Marshal(deployment)
+	if err != nil {
+		fmt.Errorf("I encode stateful set Template %+v %+v", deployment, err)
+	}
+
+	rawExtension := runtime.RawExtension{Raw: json2.RawMessage(data)}
+
+	resource := arbv1.XQueueJobResource{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: context.namespace,
+			Labels:    map[string]string{queueJobName: name},
+		},
+		Replicas:          1,
+		MinAvailable:      &min,
+		AllocatedReplicas: 0,
+		Priority:          0.0,
+		Type:              arbv1.ResourceTypeStatefulSet,
+		Template:          rawExtension,
+	}
+	
+	resources = append(resources, resource)
+
+	queueJob := &arbv1.XQueueJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: context.namespace,
+			Labels:    map[string]string{queueJobName: name},
+		},
+		Spec: arbv1.XQueueJobSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					queueJobName: name,
+				},
+			},
+			SchedSpec: arbv1.SchedulingSpecTemplate{
+				MinAvailable: int(min),
+			},
+			AggrResources: arbv1.XQueueJobResourceList{
+				Items: resources,
+			},
+		},
+		Status: arbv1.XQueueJobStatus{
+			CanRun: false,
+			State: arbv1.QueueJobStateEnqueued,
+		},
+	}
+
+	queueJob, err2 := context.karclient.ArbV1().XQueueJobs(context.namespace).Create(queueJob)
+	if err2 != nil {
+		fmt.Printf("Error is: %v", err2)
+	}
+
+	return queueJob
+
+}
+
+
+func createXQueueJobwithReplicaSet(context *context, name string, min, rep int32, img string, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
+	deployment := &appv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: context.namespace,
+		},
+		Spec: appv1.ReplicaSetSpec{
+			Replicas: &rep,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					RSJobLabel: name,
+				},
+			},
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{RSJobLabel: name, XQueueJobLabel: name, "app": name, "size": strconv.Itoa(int(rep))},
+				},
+				Spec: v1.PodSpec{
+					RestartPolicy: v1.RestartPolicyAlways,
+					SchedulerName: scheduler,
+					Containers: []v1.Container{
+						{
+							Image:           img,
+							Name:            name,
+							ImagePullPolicy: v1.PullIfNotPresent,
+							Resources: v1.ResourceRequirements{
+								Requests: req,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	resources := make([]arbv1.XQueueJobResource, 0)
+
+        data, err := json2.Marshal(deployment)
+        if err != nil {
+                fmt.Errorf("I encode stateful set Template %+v %+v", deployment, err)
+        }
+
+        rawExtension := runtime.RawExtension{Raw: json2.RawMessage(data)}
+
+        resource := arbv1.XQueueJobResource{
+                ObjectMeta: metav1.ObjectMeta{
+                        Name:      name,
+                        Namespace: context.namespace,
+                        Labels:    map[string]string{queueJobName: name},
+                },
+                Replicas:          1,
+                MinAvailable:      &min,
+                AllocatedReplicas: 0,
+                Priority:          0.0,
+                Type:              arbv1.ResourceTypeReplicaSet,
+                Template:          rawExtension,
+        }
+        
+        resources = append(resources, resource)
+
+	queueJob := &arbv1.XQueueJob{
+                ObjectMeta: metav1.ObjectMeta{
+                        Name:      name,
+                        Namespace: context.namespace,
+                        Labels:    map[string]string{queueJobName: name},
+                },
+                Spec: arbv1.XQueueJobSpec{
+                        Selector: &metav1.LabelSelector{
+                                MatchLabels: map[string]string{
+                                        queueJobName: name,
+                                },
+                        },
+                        SchedSpec: arbv1.SchedulingSpecTemplate{
+                                MinAvailable: int(min),
+                        },
+                        AggrResources: arbv1.XQueueJobResourceList{
+                                Items: resources,
+                        },
+                },
+                Status: arbv1.XQueueJobStatus{
+                        CanRun: false,
+                        State: arbv1.QueueJobStateEnqueued,
+                },
+        }
+
+        queueJob, err2 := context.karclient.ArbV1().XQueueJobs(context.namespace).Create(queueJob)
+        if err2 != nil {
+                fmt.Printf("Error is: %v", err2)
+        }
+
+        return queueJob
 }
 
 func xtaskReady(ctx *context, jobName string, taskNum int) wait.ConditionFunc {

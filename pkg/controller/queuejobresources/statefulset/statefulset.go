@@ -128,7 +128,13 @@ func (qjrPod *QueueJobResSS) GetAggregatedResources(job *arbv1.XQueueJob) *sched
             //calculate scaling
             for _, ar := range job.Spec.AggrResources.Items {
                 if ar.Type == arbv1.ResourceTypeStatefulSet {
-                        template, replicas, _ := qjrPod.GetPodTemplate(&ar)
+                        template, replicas, err := qjrPod.GetPodTemplate(&ar)
+			if template == nil {
+				glog.Errorf("Cannot find template for pod of QJ %s!", job.Name)
+			}
+			if err != nil {
+				glog.Errorf("%+v", err)
+			}
 			myres := queuejobresources.GetPodResources(template)
 			myres.MilliCPU = float64(replicas) * myres.MilliCPU
 			myres.Memory = float64(replicas) * myres.Memory
@@ -180,7 +186,7 @@ func (qjrService *QueueJobResSS) deleteStatefulSet(obj interface{}) {
 
 // Parse queue job api object to get Service template
 func (qjrService *QueueJobResSS) getStatefulSetTemplate(qjobRes *arbv1.XQueueJobResource) (*apps.StatefulSet, error) {
-	serviceGVK := schema.GroupVersion{Group: "", Version: "v1"}.WithKind("StatefulSet")
+	serviceGVK := schema.GroupVersion{Group: apps.GroupName, Version: "v1"}.WithKind("StatefulSet")
 	obj, _, err := qjrService.jsonSerializer.Decode(qjobRes.Template.Raw, &serviceGVK, nil)
 	if err != nil {
 		return nil, err

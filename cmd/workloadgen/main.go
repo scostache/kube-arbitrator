@@ -21,7 +21,7 @@ import (
 	"time"
 	"flag"
 	"math/rand"
-
+	"math"
 	"sync"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -325,12 +325,12 @@ func (qjrPod *GeneratorStats) updatePod(old, obj interface{}) {
 			if qjrPod.QJState[name].Actual >= qjrPod.QJState[name].Min {
 				qjrPod.QJRunning[name].Running = time.Now().Unix()
 				qjrPod.QJRunning[name].Completion = time.Now().Unix() + qjrPod.gconfig.TimeInterval 
-				fmt.Printf("Queuejob %s is running - requested pods: %v\n", name, qjrPod.QJState[name].Actual)
+				fmt.Printf("Queuejob %s is running - running pods: %v\n", name, qjrPod.QJState[name].Actual)
 			}
 		}
 	}
 
-	if len(pod.Labels) != 0 && len(pod.Labels[XQueueJobLabel]) > 0 && qjrPod.gconfig.SetType == "xqj" {
+	if len(pod.Labels) != 0 && len(pod.Labels[XQueueJobLabel]) > 0 && (qjrPod.gconfig.SetType == "xqj" || qjrPod.gconfig.SetType == "xqjs" || qjrPod.gconfig.SetType == "xqjr") {
                 if oldpod.Status.Phase != pod.Status.Phase && pod.Status.Phase == v1.PodRunning{
                         qjrPod.UpdateAllocated()
 			name := pod.Labels[XQueueJobLabel]
@@ -338,7 +338,7 @@ func (qjrPod *GeneratorStats) updatePod(old, obj interface{}) {
                         if qjrPod.XQJState[name].Actual >= qjrPod.XQJState[name].Min {
                                 qjrPod.XQJRunning[name].Running = time.Now().Unix()
 				qjrPod.XQJRunning[name].Completion = time.Now().Unix() + qjrPod.gconfig.TimeInterval
-                        	fmt.Printf("XQueuejob %s is running - requested pods: %v started running at: %v completion at: %v\n", name, qjrPod.XQJState[name].Actual, qjrPod.XQJRunning[name].Running, qjrPod.XQJRunning[name].Completion)
+                        	fmt.Printf("XQueuejob %s is running - running pods: %v started running at: %v completion at: %v\n", name, qjrPod.XQJState[name].Actual, qjrPod.XQJRunning[name].Running, qjrPod.XQJRunning[name].Completion)
 			}
                 }
         }
@@ -351,7 +351,7 @@ func (qjrPod *GeneratorStats) updatePod(old, obj interface{}) {
                         if qjrPod.RSState[name].Actual >= qjrPod.RSState[name].Min {
                                 qjrPod.RSRunning[name].Running = time.Now().Unix()
 				qjrPod.RSRunning[name].Completion = time.Now().Unix() + qjrPod.gconfig.TimeInterval
-                        	fmt.Printf("RS %s is running - requested pods: %v\n", name, qjrPod.RSState[name].Actual)
+                        	fmt.Printf("RS %s is running - running pods: %v\n", name, qjrPod.RSState[name].Actual)
 			}
                 }
         }
@@ -394,7 +394,7 @@ func main() {
 	workloadtype := flag.Int("type", 0, "type of workload to run: 1 means heterogeneous and 0 means homogeneous")
 	duration := flag.Int("rate", -1, "mean arrival rate of the jobs (jobs/second); -1 means a single burst of jobs")
 	number := flag.Int("number", 100, "number of jobs to generate")
-	settype := flag.String("settype", "replica", "type of set to create replica|ss|qj|xqj")
+	settype := flag.String("settype", "replica", "type of set to create replica|ss|qj|xqj|xqjs|xqjr")
 	scheduler := flag.String("scheduler", "kar-scheduler", "the scheduler name to use for the jobs")
 	master := flag.String("master", "", "The address of the Kubernetes API server (overrides any value in kubeconfig)")
 	kubeconfig := flag.String("kubeconfig", "/root/.kube/config", "Path to kubeconfig file with authorization and master location information.")
@@ -451,7 +451,8 @@ func main() {
 		
 		if *duration > -1 {
 			nextarr := rand.ExpFloat64()/float64(*duration)
-			time.Sleep(time.Duration(nextarr)*time.Second)
+			fmt.Printf("Waiting .... %v seconds\n", nextarr)
+			time.Sleep(time.Duration(math.Ceil(nextarr*1000))*time.Millisecond)
 		}
 		
 		fmt.Printf("Creating %s name %s resources %v %+v\n", *settype, name, nreplicas, slot)
@@ -467,6 +468,30 @@ func main() {
 					Running: -1,
 				}
 		}
+		if *settype == "xqjs" {
+                        qj := createXQueueJobwithStatefulSet(context, name, int32(nreplicas), int32(nreplicas), "busybox", *scheduler, slot)
+                        genstats.XQJState[name]= &Size {
+                                        Min:    qj.Spec.SchedSpec.MinAvailable,
+                                        Actual: 0,
+                                }
+                        genstats.XQJRunning[name] = &TimeStats{
+                                        Start: time.Now().Unix(),
+                                        Running: -1,
+                                }
+                }
+		if *settype == "xqjr" {
+                        qj := createXQueueJobwithReplicaSet(context, name, int32(nreplicas), int32(nreplicas), "nginx", *scheduler, slot)
+                        genstats.XQJState[name]= &Size {
+                                        Min:    qj.Spec.SchedSpec.MinAvailable,
+                                        Actual: 0,
+                                }
+                        genstats.XQJRunning[name] = &TimeStats{
+                                        Start: time.Now().Unix(),
+                                        Running: -1,
+                                }
+                }
+
+
 		if *settype == "qj" {
 			qj := createQueueJob(context, name, int32(nreplicas), int32(nreplicas), "nginx", *scheduler, slot)
 			genstats.QJState[name]= &Size{
