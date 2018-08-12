@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	schedv1 "k8s.io/api/scheduling/v1beta1"
 	arbv1 "github.com/kubernetes-incubator/kube-arbitrator/pkg/apis/v1alpha1"
 	"github.com/kubernetes-incubator/kube-arbitrator/pkg/client/clientset"
 	arbapi "github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/api"
@@ -62,7 +63,7 @@ type context struct {
 	namespace string
 }
 
-func initTestContext() *context {
+func initTestContext(nPriorities int) *context {
 	cxt := &context{
 		namespace: "workload",
 	}
@@ -85,8 +86,37 @@ func initTestContext() *context {
 		},
 	})
 	if err != nil {
-		panic(err)
+                panic(err)
+        }
+
+	_, err = cxt.kubeclient.SchedulingV1beta1().PriorityClasses().Create(&schedv1.PriorityClass{
+                        ObjectMeta: metav1.ObjectMeta{
+                                Name: "default",
+                        },
+                        Value:         int32(0),
+                        GlobalDefault: true,
+                })
+	 if err != nil {
+                        panic(err)
+        }
+
+	if nPriorities > 0 {
+		for i := 0; i < nPriorities; i++ {
+			name := "priority-"+strconv.Itoa(i)
+			value := i*10
+			_, err = cxt.kubeclient.SchedulingV1beta1().PriorityClasses().Create(&schedv1.PriorityClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+			},
+			Value:         int32(value),
+			GlobalDefault: false,
+		})
+		}
+		if err != nil {
+                	panic(err)
+        	}
 	}
+
 	return cxt
 }
 
@@ -100,11 +130,20 @@ func namespaceNotExist(ctx *context) wait.ConditionFunc {
 	}
 }
 
-func cleanupTestContext(cxt *context) {
+func cleanupTestContext(cxt *context, nPriorities int) {
 	err := cxt.kubeclient.CoreV1().Namespaces().Delete(cxt.namespace, &metav1.DeleteOptions{})
 	if err != nil {
 		panic(err)
 	}
+
+	cxt.kubeclient.SchedulingV1beta1().PriorityClasses().Delete("default", &metav1.DeleteOptions{})
+	if nPriorities > 0 {
+           for i := 0; i < nPriorities; i++ {
+                        name := "priority-"+strconv.Itoa(i)
+                        cxt.kubeclient.SchedulingV1beta1().PriorityClasses().Delete(name, &metav1.DeleteOptions{})
+           }
+        }
+
 	// Wait for namespace deleted.
 	err = wait.Poll(100*time.Millisecond, oneMinute, namespaceNotExist(cxt))
 }

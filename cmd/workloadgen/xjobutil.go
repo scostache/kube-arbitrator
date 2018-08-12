@@ -35,11 +35,14 @@ const (
 	queueJobName = "xqueuejob.kube-arbitrator.k8s.io"
 )
 
-func createXQueueJob(context *context, name string, min, rep int32, img string, priority string, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
+func createXQueueJob(context *context, name string, min, rep int32, img string, priority string, priorityvalue int, jruntime int, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
 	cmd := make([]string, 0)
 	cmd = append(cmd, "sleep")
-	cmd = append(cmd, "10000")
-
+	if jruntime > 0 {
+		cmd = append(cmd, strconv.Itoa(jruntime))
+	} else {
+		cmd = append(cmd, "100000000")
+	}
 	podTemplate := v1.PodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{queueJobName: name},
@@ -86,7 +89,7 @@ func createXQueueJob(context *context, name string, min, rep int32, img string, 
 		Replicas:          rep,
 		MinAvailable:      &min,
 		AllocatedReplicas: 0,
-		Priority:          0.0,
+		Priority:          float64(priorityvalue),
 		Type:              arbv1.ResourceTypePod,
 		Template:          rawExtension,
 	}
@@ -111,6 +114,7 @@ func createXQueueJob(context *context, name string, min, rep int32, img string, 
 			AggrResources: arbv1.XQueueJobResourceList{
 				Items: pods,
 			},
+			Priority: priorityvalue,
 		},
 		Status: arbv1.XQueueJobStatus{
 			CanRun: false,
@@ -126,11 +130,15 @@ func createXQueueJob(context *context, name string, min, rep int32, img string, 
 	return queueJob
 }
 
-func createXQueueJobwithMultipleResources(context *context, name string, min, rep int32, img string, priority string, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
+func createXQueueJobwithMultipleResources(context *context, name string, min, rep int32, img string, priority string, priorityvalue int, jruntime int, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
 	// a queuejob with two stateful sets and two services
 	cmd := make([]string, 0)
         cmd = append(cmd, "sleep")
-        cmd = append(cmd, "10000")
+	if jruntime > 0 {
+                cmd = append(cmd, strconv.Itoa(jruntime))
+        } else {
+                cmd = append(cmd, "100000000")
+        }
 
 	resources := make([]arbv1.XQueueJobResource, 0)
 	// first set of the replicas
@@ -155,7 +163,7 @@ func createXQueueJobwithMultipleResources(context *context, name string, min, re
                                 Spec: v1.PodSpec{
                                         RestartPolicy: v1.RestartPolicyAlways,
                                         SchedulerName: scheduler,
-					PriorityClassName: priority,
+					//PriorityClassName: priority,
                                         Containers: []v1.Container{
                                                 {
                                                         Image:           img,
@@ -328,10 +336,14 @@ func createXQueueJobwithMultipleResources(context *context, name string, min, re
 	return queueJob
 }
 
-func createXQueueJobwithStatefulSet(context *context, name string, min, rep int32, img string, priority string, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
+func createXQueueJobwithStatefulSet(context *context, name string, min, rep int32, img string, priority string, priorityvalue int, jruntime int, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
 	cmd := make([]string, 0)
         cmd = append(cmd, "sleep")
-        cmd = append(cmd, "10000")
+	if jruntime > 0 {
+                cmd = append(cmd, strconv.Itoa(jruntime))
+        } else {
+                cmd = append(cmd, "100000000")
+        }
 
 	deployment := &app1.StatefulSet{
                 ObjectMeta: metav1.ObjectMeta{
@@ -387,7 +399,7 @@ func createXQueueJobwithStatefulSet(context *context, name string, min, rep int3
 		Replicas:          1,
 		MinAvailable:      &min,
 		AllocatedReplicas: 0,
-		Priority:          0.0,
+		Priority:          float64(priorityvalue),
 		Type:              arbv1.ResourceTypeStatefulSet,
 		Template:          rawExtension,
 	}
@@ -412,6 +424,7 @@ func createXQueueJobwithStatefulSet(context *context, name string, min, rep int3
 			AggrResources: arbv1.XQueueJobResourceList{
 				Items: resources,
 			},
+			Priority: priorityvalue,
 		},
 		Status: arbv1.XQueueJobStatus{
 			CanRun: false,
@@ -429,7 +442,7 @@ func createXQueueJobwithStatefulSet(context *context, name string, min, rep int3
 }
 
 
-func createXQueueJobwithReplicaSet(context *context, name string, min, rep int32, img string, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
+func createXQueueJobwithReplicaSet(context *context, name string, min, rep int32, img string, priority string, priorityvalue int, jruntime int, scheduler string, req v1.ResourceList) *arbv1.XQueueJob {
 	deployment := &appv1.ReplicaSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -449,6 +462,7 @@ func createXQueueJobwithReplicaSet(context *context, name string, min, rep int32
 				Spec: v1.PodSpec{
 					RestartPolicy: v1.RestartPolicyAlways,
 					SchedulerName: scheduler,
+					PriorityClassName: priority,
 					Containers: []v1.Container{
 						{
 							Image:           img,
@@ -482,7 +496,7 @@ func createXQueueJobwithReplicaSet(context *context, name string, min, rep int32
                 Replicas:          1,
                 MinAvailable:      &min,
                 AllocatedReplicas: 0,
-                Priority:          0.0,
+                Priority:          float64(priorityvalue),
                 Type:              arbv1.ResourceTypeReplicaSet,
                 Template:          rawExtension,
         }
@@ -507,6 +521,7 @@ func createXQueueJobwithReplicaSet(context *context, name string, min, rep int32
                         AggrResources: arbv1.XQueueJobResourceList{
                                 Items: resources,
                         },
+		Priority: priorityvalue,
                 },
                 Status: arbv1.XQueueJobStatus{
                         CanRun: false,

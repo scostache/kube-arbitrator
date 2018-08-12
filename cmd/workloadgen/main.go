@@ -57,6 +57,8 @@ type GeneratorConfig struct {
         WorkloadType int   // type of workload: 1 - heterogeneous, 0 - homogeneous
 	Namespace string   // namespace in which the workload will run
 
+	EnableCompletion bool // if completion for the jobs is enable
+
 	Capacity   int64
 }
 
@@ -180,6 +182,16 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
 	ctime := time.Now().Unix()
 	fmt.Printf("Checking any jobs to delete \n")
 	for name, job := range qjrPod.QJRunning {
+		if qjrPod.gconfig.EnableCompletion {
+			queuejob, err := qjrPod.arbclients.ArbV1().QueueJobs(qjrPod.gconfig.Namespace).Get(name, metav1.GetOptions{})
+			if err!= nil {
+				continue
+			}
+			if int(queuejob.Status.Succeeded) >= queuejob.Spec.SchedSpec.MinAvailable {
+				foreground := metav1.DeletePropagationForeground
+                                err = qjrPod.arbclients.ArbV1().QueueJobs(qjrPod.gconfig.Namespace).Delete(name, &metav1.DeleteOptions{PropagationPolicy: &foreground})
+			}
+		} else {
 		 _, ok := qjrPod.Deleted[name]
 		if ctime - job.Completion > 0 && job.Completion > 0 && !ok {
 			fmt.Printf("QJ: %s Delay: %v\n", name, job.Running - job.Start)
@@ -196,6 +208,7 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
 			if err != nil {
 				fmt.Printf("%+v\n", err)
 			}
+		}
 		}
 	}
 
@@ -225,6 +238,16 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
         }
 
 	for name, job := range qjrPod.XQJRunning {
+	       if qjrPod.gconfig.EnableCompletion {
+                        queuejob, err := qjrPod.arbclients.ArbV1().XQueueJobs(qjrPod.gconfig.Namespace).Get(name, metav1.GetOptions{})
+                        if err!= nil {
+                                continue
+                        }
+                        if int(queuejob.Status.Succeeded) >= queuejob.Spec.SchedSpec.MinAvailable {
+                                foreground := metav1.DeletePropagationForeground
+                                err = qjrPod.arbclients.ArbV1().XQueueJobs(qjrPod.gconfig.Namespace).Delete(name, &metav1.DeleteOptions{PropagationPolicy: &foreground})
+                	}
+		} else {
                  _, ok := qjrPod.Deleted[name]
                 if ctime - job.Completion > 0 && job.Completion > 0 && !ok {
 			fmt.Printf("XQJ: %s Delay: %v\n", name, job.Running - job.Start)
@@ -242,8 +265,8 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
                                 fmt.Printf("%+v\n", err)
                         }
                 }
-        }
-
+		}	
+	}
 
 }
 
@@ -466,7 +489,8 @@ func main() {
 	maxlearners := flag.Int("nworker", 4, "max number of workers a job will have")
 	timeInterval := flag.Int("runtime", 180, "max duration a job will have (seconds)")
 	priorities := flag.Int("priorities", 0, "Number of priority classes")
-
+	completion := flag.Bool("completion", false, "Enables deletion of job when pods are completed instead of looking at declared runtime")
+	
 	flag.Parse()
 
 	fmt.Printf("Workloadtype=%v load=%v number of jobs=%v Set Type=%v scheduler %s\n", *workloadtype, *duration, *number, *settype, *scheduler)
@@ -499,7 +523,7 @@ func main() {
 			Number: *number,
 			Duration: *duration,
 			WorkloadType: *workloadtype,
-
+			EnableCompletion: *completion,
                 }
 
 	genstats := NewGeneratorStats(config, gconfig)
@@ -528,13 +552,19 @@ func main() {
 		fmt.Printf("Creating %s name %s resources %v %+v\n", *settype, name, nreplicas, slot)
 
 		priority := "default"
+		priorityvalue := 0
 		if *priorities > 0 {
 			prange := rand.Intn(*priorities)
+			priorityvalue = prange * 10
 			priority = "priority-"+strconv.Itoa(prange)
 		}
 	
+		jobruntime := -1
+		if *completion {
+			jobruntime = *timeInterval // TODO - change to variable runtime
+		}
 		if *settype == "xqj" {
-			qj := createXQueueJob(context, name, int32(nreplicas), int32(nreplicas), "nginx", priority, *scheduler, slot)
+			qj := createXQueueJob(context, name, int32(nreplicas), int32(nreplicas), "nginx", priority, priorityvalue, jobruntime, *scheduler, slot)
 			genstats.XQJState[name]= &Size {
 					Min: 	qj.Spec.SchedSpec.MinAvailable,
 					Actual: 0,
@@ -545,7 +575,7 @@ func main() {
 				}
 		}
 		if *settype == "xqjs" {
-                        qj := createXQueueJobwithStatefulSet(context, name, int32(nreplicas), int32(nreplicas), priority,  "busybox", *scheduler, slot)
+                        qj := createXQueueJobwithStatefulSet(context, name, int32(nreplicas), int32(nreplicas), "busybox", priority, priorityvalue, jobruntime, *scheduler, slot)
                         genstats.XQJState[name]= &Size {
                                         Min:    qj.Spec.SchedSpec.MinAvailable,
                                         Actual: 0,
@@ -556,7 +586,7 @@ func main() {
                                 }
                 }
 		if *settype == "xqjr" {
-                        qj := createXQueueJobwithReplicaSet(context, name, int32(nreplicas), int32(nreplicas), "nginx", *scheduler, slot)
+                        qj := createXQueueJobwithReplicaSet(context, name, int32(nreplicas), int32(nreplicas), "nginx", priority, priorityvalue, jobruntime, *scheduler, slot)
                         genstats.XQJState[name]= &Size {
                                         Min:    qj.Spec.SchedSpec.MinAvailable,
                                         Actual: 0,
@@ -567,7 +597,7 @@ func main() {
                                 }
                 }
 		if *settype == "xqjall" {
-                        qj := createXQueueJobwithMultipleResources(context, name, int32(nreplicas), int32(nreplicas), "nginx", priority, *scheduler, slot)
+                        qj := createXQueueJobwithMultipleResources(context, name, int32(nreplicas), int32(nreplicas), "nginx", priority, priorityvalue, jobruntime, *scheduler, slot)
                         genstats.XQJState[name]= &Size {
                                         Min:    qj.Spec.SchedSpec.MinAvailable,
                                         Actual: 0,
