@@ -238,6 +238,7 @@ func (qjrService *QueueJobResSS) SyncQueueJob(queuejob *arbv1.XQueueJob, qjobRes
 
 	services, err := qjrService.getStatefulSetsForQueueJobRes(qjobRes, queuejob)
 	if err != nil {
+		glog.Errorf("%+v", err)
 		return err
 	}
 
@@ -246,7 +247,7 @@ func (qjrService *QueueJobResSS) SyncQueueJob(queuejob *arbv1.XQueueJob, qjobRes
 
 	diff := int(replicas) - int(serviceLen)
 
-	glog.V(4).Infof("QJob: %s had %d services and %d desired services", queuejob.Name, replicas, serviceLen)
+	glog.V(4).Infof("QJob: %s had %d stateful sets and %d desired stateful sets", queuejob.Name, replicas, serviceLen)
 
 	if diff > 0 {
 		template, err := qjrService.getStatefulSetTemplate(qjobRes)
