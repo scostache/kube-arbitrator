@@ -3,12 +3,13 @@ import matplotlib.pyplot as plt
 import sys
 import os
 import errno
+import operator
 
 # Some fake data:
 
 def parse_queue(s):
   aux = s.split("=")
-  return aux[1]
+  return int(aux[1])
 
 
 dirn = sys.argv[1]
@@ -74,10 +75,13 @@ plt.savefig('%s/allocation_variation.png' % resdir)
 
 plt.clf()
 
-file = dirn + "queues.cvs"
+file = dirn + "queues_numbers.cvs"
 # plot Queue variation over time
-queue = np.genfromtxt(file, delimiter=' ', converters = {0: lambda s: parse_queue(s), 1: lambda s: parse_queue(s) })
-
+queue = np.genfromtxt(file, delimiter=' ')
+plt.plot(queue[:,1], label="Queue variation in the cluster")
+plt.xlabel('Time Step')
+plt.ylabel('Number of Queued Jobs')
+plt.savefig('%s/queue_variation.png' % resdir)
 
 # plot job request statistics
 plt.clf()
@@ -96,4 +100,3 @@ plt.xlabel('Jobs')
 plt.ylabel('CDF')
 plt.savefig('%s/cdf_job_requests.png' % resdir)
 
-plt.show()
