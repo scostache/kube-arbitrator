@@ -134,6 +134,7 @@ func (ni *NodeInfo) AddTask(task *TaskInfo) error {
 		if ti.Status == Releasing {
 			ni.Releasing.Add(ti.Resreq)
 		}
+		//fmt.Printf("------------ Node <%v> has Allocatable: %v Idle %v Used %v\n", ni.Name, ni.Idle, ni.Used)
 		ni.Idle.Sub(ti.Resreq)
 		ni.Used.Add(ti.Resreq)
 	}

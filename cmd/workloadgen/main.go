@@ -68,6 +68,8 @@ type TimeStats struct {
 	Running int64
 	Completion int64
 	RealCompletion int64
+	FirstPodRunning int64
+	LastPodRunning int64
 }
 
 type Size struct {
@@ -172,7 +174,7 @@ func buildConfig(master, kubeconfig string) (*rest.Config, error) {
 
 func (qjrPod *GeneratorStats) Run(stopCh <-chan struct{}) {
 	go qjrPod.podInformer.Informer().Run(stopCh)
-	go wait.Until(qjrPod.UtilizationSnapshot, 10*time.Second, stopCh)
+	go wait.Until(qjrPod.UtilizationSnapshot, 5*time.Second, stopCh)
 	go wait.Until(qjrPod.JobRunandClear, 1*time.Second, stopCh)
 }
 
@@ -198,7 +200,7 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
                 if err!= nil {
                                 continue
                 }
-                if int32(queuejob.Status.Running) <= int32(queuejob.Spec.SchedSpec.MinAvailable) {
+                if int32(queuejob.Status.Running) < int32(queuejob.Spec.SchedSpec.MinAvailable) {
                         real_pending_queue = real_pending_queue + 1
                 }
 
@@ -231,7 +233,7 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
 		}
 		}
 		if is_deleted {
-			fmt.Printf("QJ: %s Delay: %v DeclaredCompletion %v ActualCompletion %v Failed %v Completed %v Deleted %v Started %v \n", name, job.Running - job.Start, job.Completion - job.Running, job.RealCompletion - job.Running, qjrPod.QJState[name].FailedPods, qjrPod.QJState[name].CompletedPods, qjrPod.QJState[name].DeletedPods, qjrPod.QJRunning[name].Running)
+			fmt.Printf("QJ: %s Delay: %v DeclaredCompletion %v ActualCompletion %v Failed %v Completed %v Deleted %v Started %v TimeToStart %v FirstPodRunning %v LastPodRunning %v \n", name, job.Running - job.Start, job.Completion - job.Running, job.RealCompletion - job.Running, qjrPod.QJState[name].FailedPods, qjrPod.QJState[name].CompletedPods, qjrPod.QJState[name].DeletedPods, qjrPod.QJRunning[name].Running, qjrPod.QJRunning[name].LastPodRunning-qjrPod.QJRunning[name].FirstPodRunning, qjrPod.QJRunning[name].FirstPodRunning, qjrPod.QJRunning[name].LastPodRunning)
 		}
 	}
 
@@ -278,7 +280,7 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
                 if queuejob.Status.State == arbv1.QueueJobStateEnqueued {
                         pending_queue = pending_queue + 1
                 }
-                if int32(queuejob.Status.Running) <= int32(queuejob.Spec.SchedSpec.MinAvailable) {
+                if int32(queuejob.Status.Running) < int32(queuejob.Spec.SchedSpec.MinAvailable) {
                         real_pending_queue = real_pending_queue + 1
                 }
 
@@ -310,7 +312,7 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
                 }
 		}
 		if is_deleted {
-                        fmt.Printf("QJ: %s Delay: %v DeclaredCompletion %v ActualCompletion %v Failed %v Completed %v Deleted %v Started %v \n", name, job.Running - job.Start, job.Completion - job.Running, job.RealCompletion - job.Running, qjrPod.XQJState[name].FailedPods, qjrPod.XQJState[name].CompletedPods, qjrPod.XQJState[name].DeletedPods, qjrPod.XQJState[name].StartedPods)
+                        fmt.Printf("QJ: %s Delay: %v DeclaredCompletion %v ActualCompletion %v Failed %v Completed %v Deleted %v Started %v Requested %v TimeToStart %v FirstPodRunning %v LastpodRunning %v\n", name, job.Running - job.Start, job.Completion - job.Running, job.RealCompletion - job.Running, qjrPod.XQJState[name].FailedPods, qjrPod.XQJState[name].CompletedPods, qjrPod.XQJState[name].DeletedPods, qjrPod.XQJState[name].StartedPods, qjrPod.XQJState[name].Actual, qjrPod.XQJRunning[name].LastPodRunning-qjrPod.XQJRunning[name].FirstPodRunning, qjrPod.XQJRunning[name].FirstPodRunning, qjrPod.XQJRunning[name].LastPodRunning)
                 }	
 	}
 	fmt.Printf("Dumping Queues for jobs: PendingQueue=%v RealPendingQueue=%v\n", pending_queue, real_pending_queue)
@@ -374,17 +376,47 @@ func (qjrPod *GeneratorStats) UtilizationSnapshot() {
 				alloc = alloc + 1
 				q, ok := qjrPod.XQJState[pod.Labels[XQueueJobLabel]]
 				if ok {
-					fmt.Printf("------ job %s has %v pods running\n", pod.Labels[XQueueJobLabel], q.Actual)
 					if qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Completion <= 0 {
+						creationTs := pod.CreationTimestamp.Unix()
+						if creationTs < qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].FirstPodRunning {
+                                                        qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].FirstPodRunning = creationTs
+                                                }
+						if pod.Status.StartTime != nil {
+							runTs := pod.Status.StartTime.Unix()
+							if runTs > qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].LastPodRunning {
+								qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].LastPodRunning  = runTs
+							}
+						}
         	                        	q.Actual = q.Actual + 1
 						if q.Actual >= q.Min {
                                         		qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Running = time.Now().Unix()
-							qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Completion = time.Now().Unix() + 30 + int64(rand.Intn(int(qjrPod.gconfig.TimeInterval)))
+							qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Completion = time.Now().Unix() + 60 + int64(rand.Intn(int(qjrPod.gconfig.TimeInterval)))
                         				fmt.Printf("XQueuejob %s is running - running pods: %v started running at: %v completion at: %v\n", pod.Labels[XQueueJobLabel], qjrPod.XQJState[pod.Labels[XQueueJobLabel]].Actual, qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Running, qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Completion)
 						}
 					}
 				}
-			}
+				q, ok = qjrPod.QJState[pod.Labels[QueueJobLabel]]
+                                if ok {
+                                        if qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Completion <= 0 {
+                                                creationTs := pod.CreationTimestamp.Unix()
+                                                if creationTs < qjrPod.QJRunning[pod.Labels[QueueJobLabel]].FirstPodRunning {
+                                                        qjrPod.QJRunning[pod.Labels[QueueJobLabel]].FirstPodRunning = creationTs
+                                                }
+                                                if pod.Status.StartTime != nil {
+                                                        runTs := pod.Status.StartTime.Unix()
+                                                        if runTs > qjrPod.QJRunning[pod.Labels[QueueJobLabel]].LastPodRunning {
+                                                                qjrPod.QJRunning[pod.Labels[QueueJobLabel]].LastPodRunning  = runTs
+                                                        }
+                                                }
+                                                q.Actual = q.Actual + 1
+                                                if q.Actual >= q.Min {
+                                                        qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Running = time.Now().Unix()
+                                                        qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Completion = time.Now().Unix() + 60 + int64(rand.Intn(int(qjrPod.gconfig.TimeInterval)))
+                                                        fmt.Printf("Queuejob %s is running - running pods: %v started running at: %v completion at: %v\n", pod.Labels[QueueJobLabel], qjrPod.QJState[pod.Labels[QueueJobLabel]].Actual, qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Running, qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Completion)
+                                                }
+                                        }
+                                }
+                        }
 		}
 	}
 
@@ -461,7 +493,7 @@ func (qjrPod *GeneratorStats) updatePod(old, obj interface{}) {
 			qjrPod.QJState[name].Actual = qjrPod.QJState[name].Actual + 1
 			qjrPod.QJState[name].StartedPods = qjrPod.QJState[name].StartedPods + 1
 			if qjrPod.QJState[name].Actual >= qjrPod.QJState[name].Min {
-				qjrPod.QJRunning[name].Running = time.Now().Unix()
+				//qjrPod.QJRunning[name].Running = time.Now().Unix()
 				//qjrPod.QJRunning[name].Completion = time.Now().Unix() + int64(30 + rand.Intn(int(qjrPod.gconfig.TimeInterval)))
 				fmt.Printf("Queuejob %s is running - running pods: %v\n", name, qjrPod.QJState[name].Actual)
 			}
@@ -477,16 +509,17 @@ func (qjrPod *GeneratorStats) updatePod(old, obj interface{}) {
 	}
 
 	if len(pod.Labels) != 0 && len(pod.Labels[XQueueJobLabel]) > 0 && (qjrPod.gconfig.SetType == "xqj" || qjrPod.gconfig.SetType == "xqjs" || qjrPod.gconfig.SetType == "xqjr" || qjrPod.gconfig.SetType == "xqjall" ) {
-                if oldpod.Status.Phase != pod.Status.Phase && pod.Status.Phase == v1.PodRunning{
-			name, ok := pod.Labels[XQueueJobLabel]
-			if !ok {
-				return
-			}
+                name, ok := pod.Labels[XQueueJobLabel]
+                if !ok {
+                                return
+                }
+		if oldpod.Status.Phase != pod.Status.Phase && pod.Status.Phase == v1.PodRunning{
 			_, k := qjrPod.XQJState[name]
 			if !k {
 				fmt.Printf("Dumping data because qjrPod.XQJState is nil: %s %+v", name, pod.Labels)
 				return
 			}
+			
                         //qjrPod.XQJState[name].Actual = qjrPod.XQJState[name].Actual + 1
 			qjrPod.XQJState[name].StartedPods = qjrPod.XQJState[name].StartedPods + 1
                         if qjrPod.XQJState[name].Actual >= qjrPod.XQJState[name].Min {
@@ -679,6 +712,8 @@ func main() {
 			genstats.XQJRunning[name] = &TimeStats{
 					Start: time.Now().Unix(),
 					Running: -1,
+					FirstPodRunning: 2147483647,
+					LastPodRunning: -1,
 				}
 		}
 		if *settype == "xqjs" {
@@ -690,6 +725,8 @@ func main() {
                         genstats.XQJRunning[name] = &TimeStats{
                                         Start: time.Now().Unix(),
                                         Running: -1,
+					FirstPodRunning: 2147483647,
+                                        LastPodRunning: -1,
                                 }
                 }
 		if *settype == "xqjr" {
@@ -725,6 +762,8 @@ func main() {
 			genstats.QJRunning[name] = &TimeStats{
                                         Start: time.Now().Unix(),
                                         Running: -1,
+					FirstPodRunning: 2147483647,
+                                        LastPodRunning: -1,
                                 }
 		}
 		if *settype == "replica" {
@@ -759,7 +798,7 @@ func main() {
 	// wait all jobs to finish
 	ftime := time.Now().Unix()
 	diff := ftime - ctime
-	fmt.Printf("Makespan of workload is %v\n", diff)
+	fmt.Printf("Makespan of experiment is %v\n", diff)
 	// print all Stats
 	total_wait := 0
 	for name, stats := range genstats.XQJRunning {
