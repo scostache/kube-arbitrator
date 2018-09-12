@@ -288,7 +288,7 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
                         if int(queuejob.Status.Succeeded) >= queuejob.Spec.SchedSpec.MinAvailable {
                                 is_deleted = true
 				job.RealCompletion = time.Now().Unix()
-				fmt.Printf("%v Deleting XQJ Job %s Completed at %v \n", ctime, name, job.RealCompletion )
+				fmt.Printf("%v Deleting XQJ Job %s Completed at %v \n", ctime, name, job.RealCompletion)
 				foreground := metav1.DeletePropagationForeground
                                 err = qjrPod.arbclients.ArbV1().XQueueJobs(qjrPod.gconfig.Namespace).Delete(name, &metav1.DeleteOptions{PropagationPolicy: &foreground})
                 	}
@@ -312,7 +312,7 @@ func (qjrPod *GeneratorStats) JobRunandClear() {
                 }
 		}
 		if is_deleted {
-                        fmt.Printf("QJ: %s Delay: %v DeclaredCompletion %v ActualCompletion %v Failed %v Completed %v Deleted %v Started %v Requested %v TimeToStart %v FirstPodRunning %v LastpodRunning %v\n", name, job.Running - job.Start, job.Completion - job.Running, job.RealCompletion - job.Running, qjrPod.XQJState[name].FailedPods, qjrPod.XQJState[name].CompletedPods, qjrPod.XQJState[name].DeletedPods, qjrPod.XQJState[name].StartedPods, qjrPod.XQJState[name].Actual, qjrPod.XQJRunning[name].LastPodRunning-qjrPod.XQJRunning[name].FirstPodRunning, qjrPod.XQJRunning[name].FirstPodRunning, qjrPod.XQJRunning[name].LastPodRunning)
+                        fmt.Printf("XQJ: %s Delay: %v DeclaredCompletion %v ActualCompletion %v Failed %v Completed %v Deleted %v Started %v Requested %v TimeToStart %v FirstPodRunning %v LastpodRunning %v StartTimeStamp %v RunningTimeStamp %v CompletionTimeStamp %v\n", name, job.Running - job.Start, job.Completion - job.Running, job.RealCompletion - job.Running, qjrPod.XQJState[name].FailedPods, qjrPod.XQJState[name].CompletedPods, qjrPod.XQJState[name].DeletedPods, qjrPod.XQJState[name].StartedPods, qjrPod.XQJState[name].Actual, qjrPod.XQJRunning[name].LastPodRunning-qjrPod.XQJRunning[name].FirstPodRunning, qjrPod.XQJRunning[name].FirstPodRunning, qjrPod.XQJRunning[name].LastPodRunning, job.Start, job.Running, job.RealCompletion)
                 }	
 	}
 	fmt.Printf("Dumping Queues for jobs: PendingQueue=%v RealPendingQueue=%v\n", pending_queue, real_pending_queue)
@@ -627,7 +627,7 @@ func main() {
 	master := flag.String("master", "", "The address of the Kubernetes API server (overrides any value in kubeconfig)")
 	kubeconfig := flag.String("kubeconfig", "/root/.kube/config", "Path to kubeconfig file with authorization and master location information.")
 	maxlearners := flag.Int("nworker", 4, "max number of workers a job will have")
-	timeInterval := flag.Int("runtime", 180, "max duration a job will have (seconds)")
+	timeInterval := flag.Int("runtime", 30, "max duration a job will have (seconds)")
 	priorities := flag.Int("priorities", 0, "Number of priority classes")
 	completion := flag.Bool("completion", false, "Enables deletion of job when pods are completed instead of looking at declared runtime")
 	
@@ -643,14 +643,14 @@ func main() {
 
 	context := initTestContext(*priorities)
 	defer cleanupTestContext(context, *priorities)
-	slot := oneMem //oneCPU
+	slot := fourCPU
 	// arrival rate = exponential distribution
 	// l = util/service time, where util = number of occupied slots/capacity of slots ?
 	// exponential with mean = 1/l ; I want l = x/minute; 
 	// duration=10sec=1/6 ; service rate = 60/10 = 6 
 	// lambda = 20/min ; util = l/service = 20/6 = 3.2 >> 1 ! ?
 
-	rep := clusterSize(context, oneCPU)
+	rep := clusterSize(context, slot)
 	fmt.Printf("Cluster capacity: %v \n", rep)
 
 	gconfig := &GeneratorConfig {
@@ -689,7 +689,6 @@ func main() {
 			time.Sleep(time.Duration(math.Ceil(nextarr*1000))*time.Millisecond)
 		}
 		
-		fmt.Printf("Creating %s name %s resources %v %+v\n", *settype, name, nreplicas, slot)
 
 		priority := "default"
 		priorityvalue := 0
@@ -703,6 +702,9 @@ func main() {
 		if *completion {
 			jobruntime = *timeInterval // TODO - change to variable runtime
 		}
+
+		fmt.Printf("Creating %s name %s priority %v runtime %v resources %v %+v\n", *settype, name, priority, jobruntime, nreplicas, slot)
+
 		if *settype == "xqj" {
 			qj := createXQueueJob(context, name, int32(nreplicas), int32(nreplicas), "nginx", priority, priorityvalue, jobruntime, *scheduler, slot)
 			genstats.XQJState[name]= &Size {

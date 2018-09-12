@@ -45,6 +45,7 @@ var oneMinute = 1 * time.Minute
 var oneCPU = v1.ResourceList{"cpu": resource.MustParse("1000m")}
 var twoCPU = v1.ResourceList{"cpu": resource.MustParse("2000m")}
 var threeCPU = v1.ResourceList{"cpu": resource.MustParse("3000m")}
+var fourCPU = v1.ResourceList{"cpu": resource.MustParse("4000m")}
 
 var oneMem = v1.ResourceList{"memory": resource.MustParse("1Gi")}
 

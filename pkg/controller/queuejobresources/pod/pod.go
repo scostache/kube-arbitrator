@@ -44,11 +44,11 @@ import (
 )
 
 var queueJobKind = arbv1.SchemeGroupVersion.WithKind("XQueueJob")
-var queueJobName = "xqueuejob.arbitrator.k8s.io"
+var queueJobName = "xqueuejob.kube-arbitrator.k8s.io"
 
 const (
 	// QueueJobNameLabel label string for queuejob name
-	QueueJobNameLabel string = "xqueuejob-name"
+	QueueJobNameLabel string = "xqueuejob.kube-arbitrator.k8s.io"
 
 	// ControllerUIDLabel label string for queuejob controller uid
 	ControllerUIDLabel string = "controller-uid"
@@ -195,10 +195,10 @@ func isPodActive(p *v1.Pod) bool {
 //SyncQueueJob : method to sync the resources of this job
 func (qjrPod *QueueJobResPod) SyncQueueJob(queuejob *arbv1.XQueueJob, qjobRes *arbv1.XQueueJobResource) error {
 	// check if there are still terminating pods for this QueueJob
-	//counter, ok := qjrPod.deletedPodsCounter.Get(fmt.Sprintf("%s/%s", queuejob.Namespace, queuejob.Name))
-	//if ok && counter >= 0 {
-	//	return fmt.Errorf("There are still teminating pods for QueueJob %s/%s, can not sync it now", queuejob.Namespace, queuejob.Name)
-	//}
+	counter, ok := qjrPod.deletedPodsCounter.Get(fmt.Sprintf("%s/%s", queuejob.Namespace, queuejob.Name))
+	if ok && counter >= 0 {
+		return fmt.Errorf("There are still teminating pods for QueueJob %s/%s, can not sync it now", queuejob.Namespace, queuejob.Name)
+	}
 
 	pods, err := qjrPod.getPodsForQueueJob(queuejob)
 	if err != nil {
@@ -286,6 +286,12 @@ func (qjrPod *QueueJobResPod) manageQueueJob(qj *arbv1.XQueueJob, pods []*v1.Pod
 	} else {
 		glog.V(3).Infof("There's %v SchedulingSpec for QueueJob %v/%v",
 			len(ss.Items), qj.Namespace, qj.Name)
+	}
+
+	// if there are pods failed, then delete all pods and re-create them
+	if failed > 0 {
+		qjrPod.terminatePodsForQueueJob(qj)
+		return nil
 	}
 
 	// Create pod if necessary
