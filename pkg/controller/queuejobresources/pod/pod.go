@@ -553,6 +553,10 @@ func (qjrPod *QueueJobResPod) GetAggregatedResources(job *arbv1.XQueueJob) *sche
             for _, ar := range job.Spec.AggrResources.Items {
                 if ar.Type == arbv1.ResourceTypePod {
 			template, _ := qjrPod.GetPodTemplate(&ar)
+			if template == nil {
+				glog.Errorf("Cannot access template for resource %+v", ar)
+				continue
+			}
 			replicas := ar.Replicas
 			myres := queuejobresources.GetPodResources(template)
                         myres.MilliCPU = float64(replicas) * myres.MilliCPU
@@ -575,7 +579,11 @@ func (qjrPod *QueueJobResPod) GetAggregatedResourcesByPriority(priority int, job
 		  }
                   if ar.Type == arbv1.ResourceTypePod {
                          template, _ := qjrPod.GetPodTemplate(&ar)
-			 total = total.Add(queuejobresources.GetPodResources(template))
+			if template == nil {
+                                glog.Errorf("Cannot access template for resource %+v", ar)
+                                continue
+                        }
+			total = total.Add(queuejobresources.GetPodResources(template))
                 }
             }
         }

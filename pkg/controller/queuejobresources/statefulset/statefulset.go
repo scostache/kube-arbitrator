@@ -130,10 +130,12 @@ func (qjrPod *QueueJobResSS) GetAggregatedResources(job *arbv1.XQueueJob) *sched
                 if ar.Type == arbv1.ResourceTypeStatefulSet {
                         template, replicas, err := qjrPod.GetPodTemplate(&ar)
 			if template == nil {
-				glog.Errorf("Cannot find template for pod of QJ %s!", job.Name)
+				glog.Errorf("Cannot find template for pod of QJ %s %+v!", job.Name, ar)
+				continue
 			}
 			if err != nil {
-				glog.Errorf("%+v", err)
+				glog.Errorf("%+v - template: %+v", err, template)
+				continue
 			}
 			myres := queuejobresources.GetPodResources(template)
 			myres.MilliCPU = float64(replicas) * myres.MilliCPU
@@ -156,6 +158,10 @@ func (qjrPod *QueueJobResSS) GetAggregatedResourcesByPriority(priority int, job 
                   }
                   if ar.Type == arbv1.ResourceTypeStatefulSet {
                         template, replicas, _ := qjrPod.GetPodTemplate(&ar)
+			if template == nil {
+                                glog.Errorf("Cannot find template for pod of QJ %s %+v!", job.Name, ar)
+                                continue
+                        }
                 	myres := queuejobresources.GetPodResources(template)
                         myres.MilliCPU = float64(replicas) * myres.MilliCPU
                         myres.Memory = float64(replicas) * myres.Memory

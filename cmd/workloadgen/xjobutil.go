@@ -203,40 +203,36 @@ func createXQueueJobwithMultipleResources(context *context, name string, min, re
 	name2 := name + "02"
 	rep2 := rep - 1
 	if rep2 > 0 {
-	deployment2 :=  &app1.StatefulSet{
-                ObjectMeta: metav1.ObjectMeta{
-                        Name:      name2,
-                        Namespace: context.namespace,
-                },
-                Spec: app1.StatefulSetSpec{
-                        Replicas: &rep2,
-                        Selector: &metav1.LabelSelector{
-                                MatchLabels: map[string]string{
-                                        "app" : name,
-                                },
+		podTemplate := v1.PodTemplate{
+        	        ObjectMeta: metav1.ObjectMeta{
+                	        Labels: map[string]string{queueJobName: name},
+                	},
+                	TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PodTemplate"},
+                	Template: v1.PodTemplateSpec{
+                        	ObjectMeta: metav1.ObjectMeta{
+                        	Labels: map[string]string{queueJobName: name, "app": name, "size": strconv.Itoa(int(rep))},
                         },
-                        Template: v1.PodTemplateSpec{
-                                ObjectMeta: metav1.ObjectMeta{
-                                        Labels: map[string]string{RSJobLabel: name, XQueueJobLabel: name, "app": name, "size": strconv.Itoa(int(rep))},
-                                },
-                                Spec: v1.PodSpec{
-                                        RestartPolicy: v1.RestartPolicyAlways,
-                                        SchedulerName: scheduler,
-                                        Containers: []v1.Container{
-                                                {
-                                                        Image:           img,
-                                                        Name:            name,
-                                                        Command:         cmd,
-                                                        ImagePullPolicy: v1.PullIfNotPresent,
-                                                        Resources: v1.ResourceRequirements{
-                                                                Requests: req,
-                                                        },
+                        Spec: v1.PodSpec{
+                                PriorityClassName: priority,
+                                SchedulerName: scheduler,
+                                RestartPolicy:     v1.RestartPolicyNever,
+                                Containers: []v1.Container{
+                                        {
+                                                Image:           img,
+                                                Name:            name,
+                                                Command:         cmd,
+                                                ImagePullPolicy: v1.PullIfNotPresent,
+                                                Resources: v1.ResourceRequirements{
+                                                        Requests: req,
                                                 },
                                         },
                                 },
                         },
-                },
-        }
+                        },
+	        }
+
+	deployment2 := &podTemplate
+	
 	data, err = json2.Marshal(deployment2)
         if err != nil {
                 fmt.Errorf("I encode stateful set Template %+v %+v", deployment2, err)
@@ -253,7 +249,7 @@ func createXQueueJobwithMultipleResources(context *context, name string, min, re
                 MinAvailable:      &min,
                 AllocatedReplicas: 0,
                 Priority:          0.0,
-                Type:              arbv1.ResourceTypeStatefulSet,
+                Type:              arbv1.ResourceTypePod,
                 Template:          rawExtension,
         }
         resources = append(resources, resource)

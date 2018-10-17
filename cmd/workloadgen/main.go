@@ -174,8 +174,8 @@ func buildConfig(master, kubeconfig string) (*rest.Config, error) {
 
 func (qjrPod *GeneratorStats) Run(stopCh <-chan struct{}) {
 	go qjrPod.podInformer.Informer().Run(stopCh)
-	go wait.Until(qjrPod.UtilizationSnapshot, 5*time.Second, stopCh)
-	go wait.Until(qjrPod.JobRunandClear, 1*time.Second, stopCh)
+	go wait.Until(qjrPod.UtilizationSnapshot, 60*time.Second, stopCh)
+	go wait.Until(qjrPod.JobRunandClear, 30*time.Second, stopCh)
 }
 
 func (qjrPod *GeneratorStats) JobRunandClear() {
@@ -390,7 +390,7 @@ func (qjrPod *GeneratorStats) UtilizationSnapshot() {
         	                        	q.Actual = q.Actual + 1
 						if q.Actual >= q.Min {
                                         		qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Running = time.Now().Unix()
-							qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Completion = time.Now().Unix() + 60 + int64(rand.Intn(int(qjrPod.gconfig.TimeInterval)))
+							qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Completion = time.Now().Unix() + qjrPod.gconfig.TimeInterval //60 + int64(rand.Intn(int(qjrPod.gconfig.TimeInterval)))
                         				fmt.Printf("XQueuejob %s is running - running pods: %v started running at: %v completion at: %v\n", pod.Labels[XQueueJobLabel], qjrPod.XQJState[pod.Labels[XQueueJobLabel]].Actual, qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Running, qjrPod.XQJRunning[pod.Labels[XQueueJobLabel]].Completion)
 						}
 					}
@@ -411,7 +411,7 @@ func (qjrPod *GeneratorStats) UtilizationSnapshot() {
                                                 q.Actual = q.Actual + 1
                                                 if q.Actual >= q.Min {
                                                         qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Running = time.Now().Unix()
-                                                        qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Completion = time.Now().Unix() + 60 + int64(rand.Intn(int(qjrPod.gconfig.TimeInterval)))
+                                                        qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Completion = time.Now().Unix() + qjrPod.gconfig.TimeInterval //60 + int64(rand.Intn(int(qjrPod.gconfig.TimeInterval)))
                                                         fmt.Printf("Queuejob %s is running - running pods: %v started running at: %v completion at: %v\n", pod.Labels[QueueJobLabel], qjrPod.QJState[pod.Labels[QueueJobLabel]].Actual, qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Running, qjrPod.QJRunning[pod.Labels[QueueJobLabel]].Completion)
                                                 }
                                         }
@@ -643,7 +643,7 @@ func main() {
 
 	context := initTestContext(*priorities)
 	defer cleanupTestContext(context, *priorities)
-	slot := fourCPU
+	slot := oneCPU
 	// arrival rate = exponential distribution
 	// l = util/service time, where util = number of occupied slots/capacity of slots ?
 	// exponential with mean = 1/l ; I want l = x/minute; 
