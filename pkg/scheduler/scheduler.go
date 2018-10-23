@@ -21,33 +21,35 @@ import (
 
 	"github.com/golang/glog"
 
-	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/client"
-	schedcache "github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/cache"
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/framework"
+	schedcache "github.com/kubernetes-sigs/kube-batch/pkg/scheduler/cache"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/framework"
 )
 
 type Scheduler struct {
-	cache         schedcache.Cache
-	config        *rest.Config
-	actions       []framework.Action
-	pluginArgs    []*framework.PluginArgs
-	schedulerConf string
+	cache          schedcache.Cache
+	config         *rest.Config
+	actions        []framework.Action
+	pluginArgs     []*framework.PluginArgs
+	schedulerConf  string
+	schedulePeriod time.Duration
 }
 
 func NewScheduler(
 	config *rest.Config,
 	schedulerName string,
 	conf string,
+	period string,
+	nsAsQueue bool,
 ) (*Scheduler, error) {
+	sp, _ := time.ParseDuration(period)
 	scheduler := &Scheduler{
-		config:        config,
-		schedulerConf: conf,
-		cache:         schedcache.New(config, schedulerName),
+		config:         config,
+		schedulerConf:  conf,
+		cache:          schedcache.New(config, schedulerName, nsAsQueue),
+		schedulePeriod: sp,
 	}
 
 	return scheduler, nil
@@ -55,8 +57,6 @@ func NewScheduler(
 
 func (pc *Scheduler) Run(stopCh <-chan struct{}) {
 	var err error
-
-	createSchedulingSpecKind(pc.config)
 
 	// Start cache for policy.
 	go pc.cache.Run(stopCh)
@@ -73,7 +73,7 @@ func (pc *Scheduler) Run(stopCh <-chan struct{}) {
 
 	pc.actions, pc.pluginArgs = loadSchedulerConf(conf)
 
-	go wait.Until(pc.runOnce, 1*time.Second, stopCh)
+	go wait.Until(pc.runOnce, pc.schedulePeriod, stopCh)
 }
 
 func (pc *Scheduler) runOnce() {
@@ -91,16 +91,4 @@ func (pc *Scheduler) runOnce() {
 		action.Execute(ssn)
 	}
 
-}
-
-func createSchedulingSpecKind(config *rest.Config) error {
-	extensionscs, err := apiextensionsclient.NewForConfig(config)
-	if err != nil {
-		return err
-	}
-	_, err = client.CreateSchedulingSpecKind(extensionscs)
-	if err != nil && !apierrors.IsAlreadyExists(err) {
-		return err
-	}
-	return nil
 }

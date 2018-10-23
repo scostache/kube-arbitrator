@@ -23,12 +23,12 @@ import (
 
 	"github.com/golang/glog"
 
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/framework"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/framework"
 )
 
 var defaultSchedulerConf = map[string]string{
-	"actions":                   "decorate, allocate, preempt",
-	"plugins":                   "gang, priority, drf",
+	"actions":                   "reclaim, allocate, backfill, preempt",
+	"plugins":                   "gang, priority, drf, predicates, proportion",
 	"plugin.gang.jobready":      "true",
 	"plugin.gang.joborder":      "true",
 	"plugin.gang.preemptable":   "true",
@@ -44,7 +44,7 @@ func loadSchedulerConf(conf map[string]string) ([]framework.Action, []*framework
 
 	actionsConf, found := conf["actions"]
 	if !found {
-		actionsConf = "decorate, allocate, preempt"
+		actionsConf = "allocate, preempt"
 	}
 
 	actionNames := strings.Split(actionsConf, ",")

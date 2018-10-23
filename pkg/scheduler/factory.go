@@ -17,30 +17,33 @@ limitations under the License.
 package scheduler
 
 import (
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/actions/allocate"
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/actions/decorate"
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/actions/preempt"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/actions/allocate"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/actions/backfill"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/actions/preempt"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/actions/reclaim"
 
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/plugins/drf"
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/plugins/gang"
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/plugins/priority"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/plugins/drf"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/plugins/gang"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/plugins/predicates"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/plugins/priority"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/plugins/proportion"
 
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/framework"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/framework"
 )
 
 func init() {
-	framework.RegisterPluginBuilder("priority", priority.New)
-	framework.RegisterPluginBuilder("gang", gang.New)
+	// Plugins for Jobs
 	framework.RegisterPluginBuilder("drf", drf.New)
+	framework.RegisterPluginBuilder("gang", gang.New)
+	framework.RegisterPluginBuilder("predicates", predicates.New)
+	framework.RegisterPluginBuilder("priority", priority.New)
 
-	framework.RegisterAction(decorate.New())
+	// Plugins for Queues
+	framework.RegisterPluginBuilder("proportion", proportion.New)
+
+	// Actions
+	framework.RegisterAction(reclaim.New())
 	framework.RegisterAction(allocate.New())
+	framework.RegisterAction(backfill.New())
 	framework.RegisterAction(preempt.New())
-}
-
-// TODO (k82cn): make Actions configurable
-var actionChain = []framework.Action{
-	decorate.New(),
-	allocate.New(),
-	preempt.New(),
 }

@@ -20,8 +20,10 @@ import (
 	"math"
 
 	"github.com/golang/glog"
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/api"
-	"github.com/kubernetes-incubator/kube-arbitrator/pkg/scheduler/framework"
+
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/api"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/api/helpers"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/framework"
 )
 
 var shareDelta = 0.000001
@@ -78,26 +80,31 @@ func (drf *drfPlugin) OnSessionOpen(ssn *framework.Session) {
 		drf.jobOpts[job.UID] = attr
 	}
 
-	preemptableFn := func(l interface{}, r interface{}) bool {
-		// Re-calculate the share of lv when run one task
-		// Re-calculate the share of rv when evict on task
-		lv := l.(*api.TaskInfo)
-		rv := r.(*api.TaskInfo)
+	preemptableFn := func(preemptor *api.TaskInfo, preemptees []*api.TaskInfo) []*api.TaskInfo {
+		var victims []*api.TaskInfo
 
-		latt := drf.jobOpts[lv.Job]
-		ratt := drf.jobOpts[rv.Job]
-
-		// Also includes preempting resources.
-		lalloc := latt.allocated.Clone().Add(lv.Resreq)
-		ralloc := ratt.allocated.Clone().Sub(rv.Resreq)
-
+		latt := drf.jobOpts[preemptor.Job]
+		lalloc := latt.allocated.Clone().Add(preemptor.Resreq)
 		ls := drf.calculateShare(lalloc, drf.totalResource)
-		rs := drf.calculateShare(ralloc, drf.totalResource)
 
-		glog.V(3).Infof("DRF PreemptableFn: preemptor <%v/%v>, alloc <%v>, share <%v>; preemptee <%v/%v>, alloc <%v>, share <%v>",
-			lv.Namespace, lv.Name, lalloc, ls, rv.Namespace, rv.Name, ralloc, rs)
+		allocations := map[api.JobID]*api.Resource{}
 
-		return ls < rs || math.Abs(ls-rs) <= shareDelta
+		for _, preemptee := range preemptees {
+			if _, found := allocations[preemptee.Job]; !found {
+				ratt := drf.jobOpts[preemptee.Job]
+				allocations[preemptee.Job] = ratt.allocated.Clone()
+			}
+			ralloc := allocations[preemptee.Job].Sub(preemptee.Resreq)
+			rs := drf.calculateShare(ralloc, drf.totalResource)
+
+			if ls < rs || math.Abs(ls-rs) <= shareDelta {
+				victims = append(victims, preemptee)
+			}
+		}
+
+		glog.V(3).Infof("Victims from DRF plugins are %+v", victims)
+
+		return victims
 	}
 
 	if drf.args.PreemptableFnEnabled {
@@ -158,7 +165,7 @@ func (drf *drfPlugin) updateShare(attr *drfAttr) {
 func (drf *drfPlugin) calculateShare(allocated, totalResource *api.Resource) float64 {
 	res := float64(0)
 	for _, rn := range api.ResourceNames() {
-		share := allocated.Get(rn) / totalResource.Get(rn)
+		share := helpers.Share(allocated.Get(rn), totalResource.Get(rn))
 		if share > res {
 			res = share
 		}
