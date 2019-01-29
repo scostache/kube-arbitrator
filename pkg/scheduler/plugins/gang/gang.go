@@ -17,61 +17,89 @@ limitations under the License.
 package gang
 
 import (
+	"fmt"
+
 	"github.com/golang/glog"
 
-	arbcorev1 "github.com/kubernetes-sigs/kube-batch/pkg/apis/scheduling/v1alpha1"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/kubernetes-sigs/kube-batch/pkg/apis/scheduling/v1alpha1"
 	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/api"
 	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/framework"
 )
 
 type gangPlugin struct {
-	args *framework.PluginArgs
 }
 
-func New(args *framework.PluginArgs) framework.Plugin {
-	return &gangPlugin{
-		args: args,
-	}
+func New() framework.Plugin {
+	return &gangPlugin{}
 }
 
+func (gp *gangPlugin) Name() string {
+	return "gang"
+}
+
+// readyTaskNum return the number of tasks that are ready to run.
 func readyTaskNum(job *api.JobInfo) int32 {
-	occupid := 0
-	for status, tasks := range job.TaskStatusIndex {
-		if api.AllocatedStatus(status) || status == api.Succeeded {
-			occupid = occupid + len(tasks)
-		}
-	}
-
-	return int32(occupid)
-}
-
-func validTaskNum(job *api.JobInfo) int32 {
 	occupid := 0
 	for status, tasks := range job.TaskStatusIndex {
 		if api.AllocatedStatus(status) ||
 			status == api.Succeeded ||
-			status == api.Pending {
+			status == api.Pipelined {
 			occupid = occupid + len(tasks)
 		}
 	}
 
 	return int32(occupid)
+}
+
+// validTaskNum return the number of tasks that are valid.
+func validTaskNum(job *api.JobInfo) int32 {
+	occupied := 0
+	for status, tasks := range job.TaskStatusIndex {
+		if api.AllocatedStatus(status) ||
+			status == api.Succeeded ||
+			status == api.Pipelined ||
+			status == api.Pending {
+			occupied = occupied + len(tasks)
+		}
+	}
+
+	return int32(occupied)
 }
 
 func jobReady(obj interface{}) bool {
 	job := obj.(*api.JobInfo)
 
-	occupid := readyTaskNum(job)
+	occupied := readyTaskNum(job)
 
-	return occupid >= job.MinAvailable
+	return occupied >= job.MinAvailable
 }
 
 func (gp *gangPlugin) OnSessionOpen(ssn *framework.Session) {
-	for _, job := range ssn.Jobs {
-		if validTaskNum(job) < job.MinAvailable {
-			ssn.Backoff(job, arbcorev1.UnschedulableEvent, "not enough valid tasks for gang-scheduling")
+	validJobFn := func(obj interface{}) *api.ValidateResult {
+		job, ok := obj.(*api.JobInfo)
+		if !ok {
+			return &api.ValidateResult{
+				Pass:    false,
+				Message: fmt.Sprintf("Failed to convert <%v> to *JobInfo", obj),
+			}
 		}
+
+		vtn := validTaskNum(job)
+		if vtn < job.MinAvailable {
+			return &api.ValidateResult{
+				Pass:   false,
+				Reason: v1alpha1.NotEnoughPodsReason,
+				Message: fmt.Sprintf("Not enough valid tasks for gang-scheduling, valid: %d, min: %d",
+					vtn, job.MinAvailable),
+			}
+		}
+		return nil
 	}
+
+	ssn.AddJobValidFn(gp.Name(), validJobFn)
 
 	preemptableFn := func(preemptor *api.TaskInfo, preemptees []*api.TaskInfo) []*api.TaskInfo {
 		var victims []*api.TaskInfo
@@ -93,9 +121,10 @@ func (gp *gangPlugin) OnSessionOpen(ssn *framework.Session) {
 
 		return victims
 	}
-	if gp.args.PreemptableFnEnabled {
-		ssn.AddPreemptableFn(preemptableFn)
-	}
+
+	// TODO(k82cn): Support preempt/reclaim batch job.
+	ssn.AddReclaimableFn(gp.Name(), preemptableFn)
+	ssn.AddPreemptableFn(gp.Name(), preemptableFn)
 
 	jobOrderFn := func(l, r interface{}) int {
 		lv := l.(*api.JobInfo)
@@ -104,7 +133,7 @@ func (gp *gangPlugin) OnSessionOpen(ssn *framework.Session) {
 		lReady := jobReady(lv)
 		rReady := jobReady(rv)
 
-		glog.V(3).Infof("Gang JobOrderFn: <%v/%v> is ready: %t, <%v/%v> is ready: %t",
+		glog.V(4).Infof("Gang JobOrderFn: <%v/%v> is ready: %t, <%v/%v> is ready: %t",
 			lv.Namespace, lv.Name, lReady, rv.Namespace, rv.Name, rReady)
 
 		if lReady && rReady {
@@ -120,7 +149,11 @@ func (gp *gangPlugin) OnSessionOpen(ssn *framework.Session) {
 		}
 
 		if !lReady && !rReady {
-			if lv.UID < rv.UID {
+			if lv.CreationTimestamp.Equal(&rv.CreationTimestamp) {
+				if lv.UID < rv.UID {
+					return -1
+				}
+			} else if lv.CreationTimestamp.Before(&rv.CreationTimestamp) {
 				return -1
 			}
 			return 1
@@ -129,19 +162,29 @@ func (gp *gangPlugin) OnSessionOpen(ssn *framework.Session) {
 		return 0
 	}
 
-	if gp.args.JobOrderFnEnabled {
-		ssn.AddJobOrderFn(jobOrderFn)
-	}
-
-	if gp.args.JobReadyFnEnabled {
-		ssn.AddJobReadyFn(jobReady)
-	}
+	ssn.AddJobOrderFn(gp.Name(), jobOrderFn)
+	ssn.AddJobReadyFn(gp.Name(), jobReady)
 }
 
 func (gp *gangPlugin) OnSessionClose(ssn *framework.Session) {
 	for _, job := range ssn.Jobs {
-		if len(job.TaskStatusIndex[api.Allocated]) != 0 {
-			ssn.Backoff(job, arbcorev1.UnschedulableEvent, "not enough resource for job")
+		if !jobReady(job) {
+			msg := fmt.Sprintf("%v/%v tasks in gang unschedulable: %v",
+				job.MinAvailable-readyTaskNum(job), len(job.Tasks), job.FitError())
+
+			jc := &v1alpha1.PodGroupCondition{
+				Type:               v1alpha1.PodGroupUnschedulableType,
+				Status:             v1.ConditionTrue,
+				LastTransitionTime: metav1.Now(),
+				TransitionID:       string(ssn.UID),
+				Reason:             v1alpha1.NotEnoughResourcesReason,
+				Message:            msg,
+			}
+
+			if err := ssn.UpdateJobCondition(job, jc); err != nil {
+				glog.Errorf("Failed to update job <%s/%s> condition: %v",
+					job.Namespace, job.Name, err)
+			}
 		}
 	}
 }

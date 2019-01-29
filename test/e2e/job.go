@@ -17,6 +17,8 @@ limitations under the License.
 package e2e
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -103,7 +105,7 @@ var _ = Describe("Job E2E Test", func() {
 		err = waitPodGroupPending(context, pg)
 		Expect(err).NotTo(HaveOccurred())
 
-		waitPodGroupUnschedulable(context, pg)
+		err = waitPodGroupUnschedulable(context, pg)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = deleteReplicaSet(context, replicaset.Name)
@@ -164,15 +166,15 @@ var _ = Describe("Job E2E Test", func() {
 
 		job.name = "preemptee-qj"
 		_, pg1 := createJobEx(context, job)
-		err := waitTasksReadyEx(context, pg1, int(rep))
+		err := waitTasksReady(context, pg1, int(rep))
 		Expect(err).NotTo(HaveOccurred())
 
 		job.name = "preemptor-qj"
 		_, pg2 := createJobEx(context, job)
-		err = waitTasksReadyEx(context, pg1, int(rep)/2)
+		err = waitTasksReady(context, pg1, int(rep)/2)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = waitTasksReadyEx(context, pg2, int(rep)/2)
+		err = waitTasksReady(context, pg2, int(rep)/2)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -196,7 +198,7 @@ var _ = Describe("Job E2E Test", func() {
 
 		job.name = "preemptee-qj"
 		_, pg1 := createJobEx(context, job)
-		err := waitTasksReadyEx(context, pg1, int(rep))
+		err := waitTasksReady(context, pg1, int(rep))
 		Expect(err).NotTo(HaveOccurred())
 
 		job.name = "preemptor-qj1"
@@ -207,13 +209,13 @@ var _ = Describe("Job E2E Test", func() {
 		_, pg3 := createJobEx(context, job)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = waitTasksReadyEx(context, pg1, int(rep)/3)
+		err = waitTasksReady(context, pg1, int(rep)/3)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = waitTasksReadyEx(context, pg2, int(rep)/3)
+		err = waitTasksReady(context, pg2, int(rep)/3)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = waitTasksReadyEx(context, pg3, int(rep)/3)
+		err = waitTasksReady(context, pg3, int(rep)/3)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -244,6 +246,124 @@ var _ = Describe("Job E2E Test", func() {
 		_, pg := createJobEx(context, job)
 
 		err := waitPodGroupReady(context, pg)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("Statement", func() {
+		context := initTestContext()
+		defer cleanupTestContext(context)
+
+		slot := oneCPU
+		rep := clusterSize(context, slot)
+
+		job := &jobSpec{
+			namespace: "test",
+			tasks: []taskSpec{
+				{
+					img: "nginx",
+					req: slot,
+					min: rep,
+					rep: rep,
+				},
+			},
+		}
+
+		job.name = "st-qj-1"
+		_, pg1 := createJobEx(context, job)
+		err := waitPodGroupReady(context, pg1)
+		Expect(err).NotTo(HaveOccurred())
+
+		now := time.Now()
+
+		job.name = "st-qj-2"
+		_, pg2 := createJobEx(context, job)
+		err = waitPodGroupUnschedulable(context, pg2)
+		Expect(err).NotTo(HaveOccurred())
+
+		// No preemption event
+		evicted, err := podGroupEvicted(context, pg1, now)()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(evicted).NotTo(BeTrue())
+	})
+
+	It("TaskPriority", func() {
+		context := initTestContext()
+		defer cleanupTestContext(context)
+
+		slot := oneCPU
+		rep := clusterSize(context, slot)
+
+		replicaset := createReplicaSet(context, "rs-1", rep/2, "nginx", slot)
+		err := waitReplicaSetReady(context, replicaset.Name)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, pg := createJobEx(context, &jobSpec{
+			name: "multi-pod-job",
+			tasks: []taskSpec{
+				{
+					img: "nginx",
+					pri: workerPriority,
+					min: rep/2 - 1,
+					rep: rep,
+					req: slot,
+				},
+				{
+					img: "nginx",
+					pri: masterPriority,
+					min: 1,
+					rep: 1,
+					req: slot,
+				},
+			},
+		})
+
+		expteced := map[string]int{
+			masterPriority: 1,
+			workerPriority: int(rep/2) - 1,
+		}
+
+		err = waitTasksReadyEx(context, pg, expteced)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("Try to fit unassigned task with different resource requests in one loop", func() {
+		context := initTestContext()
+		defer cleanupTestContext(context)
+
+		slot := oneCPU
+		rep := clusterSize(context, slot)
+		minMemberOverride := int32(1)
+
+		replicaset := createReplicaSet(context, "rs-1", rep-1, "nginx", slot)
+		err := waitReplicaSetReady(context, replicaset.Name)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, pg := createJobEx(context, &jobSpec{
+			name: "multi-task-diff-resource-job",
+			tasks: []taskSpec{
+				{
+					img: "nginx",
+					pri: masterPriority,
+					min: 1,
+					rep: 1,
+					req: twoCPU,
+				},
+				{
+					img: "nginx",
+					pri: workerPriority,
+					min: 1,
+					rep: 1,
+					req: halfCPU,
+				},
+			},
+			minMember: &minMemberOverride,
+		})
+
+		err = waitPodGroupPending(context, pg)
+		Expect(err).NotTo(HaveOccurred())
+
+		// task_1 has been scheduled
+		err = waitTasksReady(context, pg, int(minMemberOverride))
 		Expect(err).NotTo(HaveOccurred())
 	})
 })

@@ -35,17 +35,14 @@ type drfAttr struct {
 }
 
 type drfPlugin struct {
-	args *framework.PluginArgs
-
 	totalResource *api.Resource
 
 	// Key is Job ID
 	jobOpts map[api.JobID]*drfAttr
 }
 
-func New(args *framework.PluginArgs) framework.Plugin {
+func New() framework.Plugin {
 	return &drfPlugin{
-		args:          args,
 		totalResource: api.EmptyResource(),
 		jobOpts:       map[api.JobID]*drfAttr{},
 	}
@@ -102,21 +99,18 @@ func (drf *drfPlugin) OnSessionOpen(ssn *framework.Session) {
 			}
 		}
 
-		glog.V(3).Infof("Victims from DRF plugins are %+v", victims)
+		glog.V(4).Infof("Victims from DRF plugins are %+v", victims)
 
 		return victims
 	}
 
-	if drf.args.PreemptableFnEnabled {
-		// Add Preemptable function.
-		ssn.AddPreemptableFn(preemptableFn)
-	}
+	ssn.AddPreemptableFn(drf.Name(), preemptableFn)
 
 	jobOrderFn := func(l interface{}, r interface{}) int {
 		lv := l.(*api.JobInfo)
 		rv := r.(*api.JobInfo)
 
-		glog.V(3).Infof("DRF JobOrderFn: <%v/%v> is ready: %d, <%v/%v> is ready: %d",
+		glog.V(4).Infof("DRF JobOrderFn: <%v/%v> is ready: %d, <%v/%v> is ready: %d",
 			lv.Namespace, lv.Name, lv.Priority, rv.Namespace, rv.Name, rv.Priority)
 
 		if drf.jobOpts[lv.UID].share == drf.jobOpts[rv.UID].share {
@@ -130,10 +124,7 @@ func (drf *drfPlugin) OnSessionOpen(ssn *framework.Session) {
 		return 1
 	}
 
-	if drf.args.JobOrderFnEnabled {
-		// Add Job Order function.
-		ssn.AddJobOrderFn(jobOrderFn)
-	}
+	ssn.AddJobOrderFn(drf.Name(), jobOrderFn)
 
 	// Register event handlers.
 	ssn.AddEventHandler(&framework.EventHandler{
@@ -143,16 +134,16 @@ func (drf *drfPlugin) OnSessionOpen(ssn *framework.Session) {
 
 			drf.updateShare(attr)
 
-			glog.V(3).Infof("DRF AllocateFunc: task <%v/%v>, resreq <%v>,  share <%v>",
+			glog.V(4).Infof("DRF AllocateFunc: task <%v/%v>, resreq <%v>,  share <%v>",
 				event.Task.Namespace, event.Task.Name, event.Task.Resreq, attr.share)
 		},
-		EvictFunc: func(event *framework.Event) {
+		DeallocateFunc: func(event *framework.Event) {
 			attr := drf.jobOpts[event.Task.Job]
 			attr.allocated.Sub(event.Task.Resreq)
 
 			drf.updateShare(attr)
 
-			glog.V(3).Infof("DRF EvictFunc: task <%v/%v>, resreq <%v>,  share <%v>",
+			glog.V(4).Infof("DRF EvictFunc: task <%v/%v>, resreq <%v>,  share <%v>",
 				event.Task.Namespace, event.Task.Name, event.Task.Resreq, attr.share)
 		},
 	})

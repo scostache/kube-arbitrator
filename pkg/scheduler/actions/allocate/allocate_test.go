@@ -18,6 +18,7 @@ package allocate
 
 import (
 	"fmt"
+
 	"reflect"
 	"sync"
 	"testing"
@@ -27,10 +28,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 
-	arbcorev1 "github.com/kubernetes-sigs/kube-batch/pkg/apis/scheduling/v1alpha1"
+	kbv1 "github.com/kubernetes-sigs/kube-batch/pkg/apis/scheduling/v1alpha1"
 	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/api"
 	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/cache"
+	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/conf"
 	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/framework"
 	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/plugins/drf"
 	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler/plugins/proportion"
@@ -73,7 +76,7 @@ func buildPod(ns, n, nn string, p v1.PodPhase, req v1.ResourceList, groupName st
 			Namespace: ns,
 			Labels:    labels,
 			Annotations: map[string]string{
-				arbcorev1.GroupNameAnnotationKey: groupName,
+				kbv1.GroupNameAnnotationKey: groupName,
 			},
 		},
 		Status: v1.PodStatus{
@@ -90,14 +93,6 @@ func buildPod(ns, n, nn string, p v1.PodPhase, req v1.ResourceList, groupName st
 				},
 			},
 		},
-	}
-}
-
-func buildOwnerReference(owner string) metav1.OwnerReference {
-	controller := true
-	return metav1.OwnerReference{
-		Controller: &controller,
-		UID:        types.UID(owner),
 	}
 }
 
@@ -119,6 +114,29 @@ func (fb *fakeBinder) Bind(p *v1.Pod, hostname string) error {
 	return nil
 }
 
+type fakeStatusUpdater struct {
+}
+
+func (ftsu *fakeStatusUpdater) UpdatePod(pod *v1.Pod, podCondition *v1.PodCondition) (*v1.Pod, error) {
+	// do nothing here
+	return nil, nil
+}
+
+func (ftsu *fakeStatusUpdater) UpdatePodGroup(pg *kbv1.PodGroup) (*kbv1.PodGroup, error) {
+	// do nothing here
+	return nil, nil
+}
+
+type fakeVolumeBinder struct {
+}
+
+func (fvb *fakeVolumeBinder) AllocateVolumes(task *api.TaskInfo, hostname string) error {
+	return nil
+}
+func (fvb *fakeVolumeBinder) BindVolumes(task *api.TaskInfo) error {
+	return nil
+}
+
 func TestAllocate(t *testing.T) {
 	framework.RegisterPluginBuilder("drf", drf.New)
 	framework.RegisterPluginBuilder("proportion", proportion.New)
@@ -126,15 +144,15 @@ func TestAllocate(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		podGroups []*arbcorev1.PodGroup
+		podGroups []*kbv1.PodGroup
 		pods      []*v1.Pod
 		nodes     []*v1.Node
-		queues    []*arbcorev1.Queue
+		queues    []*kbv1.Queue
 		expected  map[string]string
 	}{
 		{
 			name: "one Job with two Pods on one node",
-			podGroups: []*arbcorev1.PodGroup{
+			podGroups: []*kbv1.PodGroup{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "pg1",
@@ -149,12 +167,12 @@ func TestAllocate(t *testing.T) {
 			nodes: []*v1.Node{
 				buildNode("n1", buildResourceList("2", "4Gi"), make(map[string]string)),
 			},
-			queues: []*arbcorev1.Queue{
+			queues: []*kbv1.Queue{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "c1",
 					},
-					Spec: arbcorev1.QueueSpec{
+					Spec: kbv1.QueueSpec{
 						Weight: 1,
 					},
 				},
@@ -166,7 +184,7 @@ func TestAllocate(t *testing.T) {
 		},
 		{
 			name: "two Jobs on one node",
-			podGroups: []*arbcorev1.PodGroup{
+			podGroups: []*kbv1.PodGroup{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "pg1",
@@ -194,12 +212,12 @@ func TestAllocate(t *testing.T) {
 			nodes: []*v1.Node{
 				buildNode("n1", buildResourceList("2", "4G"), make(map[string]string)),
 			},
-			queues: []*arbcorev1.Queue{
+			queues: []*kbv1.Queue{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "c1",
 					},
-					Spec: arbcorev1.QueueSpec{
+					Spec: kbv1.QueueSpec{
 						Weight: 1,
 					},
 				},
@@ -207,7 +225,7 @@ func TestAllocate(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "c2",
 					},
-					Spec: arbcorev1.QueueSpec{
+					Spec: kbv1.QueueSpec{
 						Weight: 1,
 					},
 				},
@@ -227,10 +245,14 @@ func TestAllocate(t *testing.T) {
 			c:     make(chan string),
 		}
 		schedulerCache := &cache.SchedulerCache{
-			Nodes:  make(map[string]*api.NodeInfo),
-			Jobs:   make(map[api.JobID]*api.JobInfo),
-			Queues: make(map[api.QueueID]*api.QueueInfo),
-			Binder: binder,
+			Nodes:         make(map[string]*api.NodeInfo),
+			Jobs:          make(map[api.JobID]*api.JobInfo),
+			Queues:        make(map[api.QueueID]*api.QueueInfo),
+			Binder:        binder,
+			StatusUpdater: &fakeStatusUpdater{},
+			VolumeBinder:  &fakeVolumeBinder{},
+
+			Recorder: record.NewFakeRecorder(100),
 		}
 		for _, node := range test.nodes {
 			schedulerCache.AddNode(node)
@@ -247,16 +269,18 @@ func TestAllocate(t *testing.T) {
 			schedulerCache.AddQueue(q)
 		}
 
-		drfArgs := &framework.PluginArgs{
-			Name:                 "drf",
-			PreemptableFnEnabled: true,
-			JobOrderFnEnabled:    true,
-		}
-		proArgs := &framework.PluginArgs{
-			Name: "proportion",
-		}
-
-		ssn := framework.OpenSession(schedulerCache, []*framework.PluginArgs{proArgs, drfArgs})
+		ssn := framework.OpenSession(schedulerCache, []conf.Tier{
+			{
+				Plugins: []conf.PluginOption{
+					{
+						Name: "drf",
+					},
+					{
+						Name: "proportion",
+					},
+				},
+			},
+		})
 		defer framework.CloseSession(ssn)
 
 		allocate.Execute(ssn)

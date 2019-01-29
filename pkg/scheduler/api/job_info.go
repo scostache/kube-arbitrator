@@ -18,11 +18,15 @@ package api
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/kubernetes-sigs/kube-batch/cmd/kube-batch/app/options"
 	arbcorev1 "github.com/kubernetes-sigs/kube-batch/pkg/apis/scheduling/v1alpha1"
 	"github.com/kubernetes-sigs/kube-batch/pkg/apis/utils"
 )
@@ -38,9 +42,10 @@ type TaskInfo struct {
 
 	Resreq *Resource
 
-	NodeName string
-	Status   TaskStatus
-	Priority int32
+	NodeName    string
+	Status      TaskStatus
+	Priority    int32
+	VolumeReady bool
 
 	Pod *v1.Pod
 }
@@ -72,9 +77,8 @@ func NewTaskInfo(pod *v1.Pod) *TaskInfo {
 		NodeName:  pod.Spec.NodeName,
 		Status:    getTaskStatus(pod),
 		Priority:  1,
-
-		Pod:    pod,
-		Resreq: req,
+		Pod:       pod,
+		Resreq:    req,
 	}
 
 	if pod.Spec.Priority != nil {
@@ -86,15 +90,16 @@ func NewTaskInfo(pod *v1.Pod) *TaskInfo {
 
 func (ti *TaskInfo) Clone() *TaskInfo {
 	return &TaskInfo{
-		UID:       ti.UID,
-		Job:       ti.Job,
-		Name:      ti.Name,
-		Namespace: ti.Namespace,
-		NodeName:  ti.NodeName,
-		Status:    ti.Status,
-		Priority:  ti.Priority,
-		Pod:       ti.Pod,
-		Resreq:    ti.Resreq.Clone(),
+		UID:         ti.UID,
+		Job:         ti.Job,
+		Name:        ti.Name,
+		Namespace:   ti.Namespace,
+		NodeName:    ti.NodeName,
+		Status:      ti.Status,
+		Priority:    ti.Priority,
+		Pod:         ti.Pod,
+		Resreq:      ti.Resreq.Clone(),
+		VolumeReady: ti.VolumeReady,
 	}
 }
 
@@ -107,6 +112,8 @@ func (ti TaskInfo) String() string {
 type JobID types.UID
 
 type tasksMap map[TaskID]*TaskInfo
+
+type NodeResourceMap map[string]*Resource
 
 type JobInfo struct {
 	UID JobID
@@ -121,6 +128,8 @@ type JobInfo struct {
 	NodeSelector map[string]string
 	MinAvailable int32
 
+	NodesFitDelta NodeResourceMap
+
 	// All tasks of the Job.
 	TaskStatusIndex map[TaskStatus]tasksMap
 	Tasks           tasksMap
@@ -128,7 +137,8 @@ type JobInfo struct {
 	Allocated    *Resource
 	TotalRequest *Resource
 
-	PodGroup *arbcorev1.PodGroup
+	CreationTimestamp metav1.Time
+	PodGroup          *arbcorev1.PodGroup
 
 	// TODO(k82cn): keep backward compatbility, removed it when v1alpha1 finalized.
 	PDB *policyv1.PodDisruptionBudget
@@ -138,11 +148,11 @@ func NewJobInfo(uid JobID) *JobInfo {
 	return &JobInfo{
 		UID: uid,
 
-		MinAvailable: 0,
-		NodeSelector: make(map[string]string),
-
-		Allocated:    EmptyResource(),
-		TotalRequest: EmptyResource(),
+		MinAvailable:  0,
+		NodeSelector:  make(map[string]string),
+		NodesFitDelta: make(NodeResourceMap),
+		Allocated:     EmptyResource(),
+		TotalRequest:  EmptyResource(),
 
 		TaskStatusIndex: map[TaskStatus]tasksMap{},
 		Tasks:           tasksMap{},
@@ -158,12 +168,20 @@ func (ji *JobInfo) SetPodGroup(pg *arbcorev1.PodGroup) {
 	ji.Namespace = pg.Namespace
 	ji.MinAvailable = pg.Spec.MinMember
 
-	if len(pg.Spec.Queue) == 0 {
-		ji.Queue = QueueID(pg.Namespace)
-	} else {
+	//set queue name based on the available information
+	//in the following priority order:
+	// 1. queue name from PodGroup spec (if available)
+	// 2. queue name from default-queue command line option (if specified)
+	// 3. namespace name
+	if len(pg.Spec.Queue) > 0 {
 		ji.Queue = QueueID(pg.Spec.Queue)
+	} else if len(options.Options().DefaultQueue) > 0 {
+		ji.Queue = QueueID(options.Options().DefaultQueue)
+	} else {
+		ji.Queue = QueueID(pg.Namespace)
 	}
 
+	ji.CreationTimestamp = pg.GetCreationTimestamp()
 	ji.PodGroup = pg
 }
 
@@ -171,8 +189,13 @@ func (ji *JobInfo) SetPDB(pdb *policyv1.PodDisruptionBudget) {
 	ji.Name = pdb.Name
 	ji.MinAvailable = pdb.Spec.MinAvailable.IntVal
 	ji.Namespace = pdb.Namespace
-	ji.Queue = QueueID(pdb.Namespace)
+	if len(options.Options().DefaultQueue) == 0 {
+		ji.Queue = QueueID(pdb.Namespace)
+	} else {
+		ji.Queue = QueueID(options.Options().DefaultQueue)
+	}
 
+	ji.CreationTimestamp = pdb.GetCreationTimestamp()
 	ji.PDB = pdb
 }
 
@@ -263,10 +286,11 @@ func (ji *JobInfo) Clone() *JobInfo {
 		Namespace: ji.Namespace,
 		Queue:     ji.Queue,
 
-		MinAvailable: ji.MinAvailable,
-		NodeSelector: map[string]string{},
-		Allocated:    ji.Allocated.Clone(),
-		TotalRequest: ji.TotalRequest.Clone(),
+		MinAvailable:  ji.MinAvailable,
+		NodeSelector:  map[string]string{},
+		Allocated:     ji.Allocated.Clone(),
+		TotalRequest:  ji.TotalRequest.Clone(),
+		NodesFitDelta: make(NodeResourceMap),
 
 		PDB:      ji.PDB,
 		PodGroup: ji.PodGroup,
@@ -274,6 +298,8 @@ func (ji *JobInfo) Clone() *JobInfo {
 		TaskStatusIndex: map[TaskStatus]tasksMap{},
 		Tasks:           tasksMap{},
 	}
+
+	ji.CreationTimestamp.DeepCopyInto(&info.CreationTimestamp)
 
 	for k, v := range ji.NodeSelector {
 		info.NodeSelector[k] = v
@@ -296,4 +322,37 @@ func (ji JobInfo) String() string {
 	}
 
 	return fmt.Sprintf("Job (%v): name %v, minAvailable %d", ji.UID, ji.Name, ji.MinAvailable) + res
+}
+
+// Error returns detailed information on why a job's task failed to fit on
+// each available node
+func (ji *JobInfo) FitError() string {
+	if len(ji.NodesFitDelta) == 0 {
+		reasonMsg := fmt.Sprintf("0 nodes are available")
+		return reasonMsg
+	}
+
+	reasons := make(map[string]int)
+	for _, v := range ji.NodesFitDelta {
+		if v.Get(v1.ResourceCPU) < 0 {
+			reasons["cpu"]++
+		}
+		if v.Get(v1.ResourceMemory) < 0 {
+			reasons["memory"]++
+		}
+		if v.Get(GPUResourceName) < 0 {
+			reasons["GPU"]++
+		}
+	}
+
+	sortReasonsHistogram := func() []string {
+		reasonStrings := []string{}
+		for k, v := range reasons {
+			reasonStrings = append(reasonStrings, fmt.Sprintf("%v insufficient %v", v, k))
+		}
+		sort.Strings(reasonStrings)
+		return reasonStrings
+	}
+	reasonMsg := fmt.Sprintf("0/%v nodes are available, %v.", len(ji.NodesFitDelta), strings.Join(sortReasonsHistogram(), ", "))
+	return reasonMsg
 }

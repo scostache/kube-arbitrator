@@ -5,8 +5,8 @@ export KA_BIN=_output/bin
 export LOG_LEVEL=3
 export NUM_NODES=3
 
-dind_url=https://cdn.rawgit.com/kubernetes-sigs/kubeadm-dind-cluster/master/fixed/dind-cluster-v1.11.sh
-dind_dest=./hack/dind-cluster-v1.11.sh
+dind_url=https://cdn.rawgit.com/kubernetes-sigs/kubeadm-dind-cluster/master/fixed/dind-cluster-v1.13.sh
+dind_dest=./hack/dind-cluster-v1.13.sh
 
 if [ $(echo $RANDOM%2 | bc) -eq 1 ]
 then
@@ -26,12 +26,12 @@ kubectl create -f config/crds/scheduling_v1alpha1_podgroup.yaml
 kubectl create -f config/crds/scheduling_v1alpha1_queue.yaml
 
 # start kube-batch
-nohup ${KA_BIN}/kube-batch --kubeconfig ${HOME}/.kube/config --enable-namespace-as-queue=${ENABLE_NAMESPACES_AS_QUEUE} --logtostderr --v ${LOG_LEVEL} > scheduler.log 2>&1 &
+nohup ${KA_BIN}/kube-batch --kubeconfig ${HOME}/.kube/config --scheduler-conf=example/kube-batch-conf.yaml --enable-namespace-as-queue=${ENABLE_NAMESPACES_AS_QUEUE} --logtostderr --v ${LOG_LEVEL} > scheduler.log 2>&1 &
 
 # clean up
 function cleanup {
     killall -9 kube-batch
-    ./hack/dind-cluster-v1.11.sh down
+    ./hack/dind-cluster-v1.13.sh down
 
     echo "===================================================================================="
     echo "=============================>>>>> Scheduler Logs <<<<<============================="

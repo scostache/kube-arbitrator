@@ -3,7 +3,7 @@
 This doc will show how to run `kube-batch` as a kubernetes batch scheduler. It is for [master](https://github.com/kubernetes-sigs/kube-batch/tree/master) branch.
 
 ## 1. Pre-condition
-To run `kube-batch`, a Kubernetes cluster must start up. Here is a document on [Using kubeadm to Create a Cluster](https://kubernetes.io/docs/setup/independent/create-cluster-kubeadm/). Additionally, for common purposes and testing and deploying on local machine, one can use Minikube. This is a document on [Running Kubernetes Locally via Minikube](https://kubernetes.io/docs/getting-started-guides/minikube/).
+To run `kube-batch`, a Kubernetes cluster must start up. Here is a document on [Using kubeadm to Create a Cluster](https://kubernetes.io/docs/setup/independent/create-cluster-kubeadm/). Additionally, for common purposes and testing and deploying on local machine, one can use Minikube. This is a document on [Running Kubernetes Locally via Minikube](https://kubernetes.io/docs/getting-started-guides/minikube/). Besides, you can also use [kind](https://github.com/kubernetes-sigs/kind) which is a tool for running local Kubernetes clusters using Docker container "nodes".
 
 `kube-batch` need to run as a kubernetes scheduler. The next step will show how to run `kube-batch` as kubernetes scheduler quickly. Refer [Configure Multiple Schedulers](https://kubernetes.io/docs/tasks/administer-cluster/configure-multiple-schedulers/) to get more details.
 
@@ -11,10 +11,10 @@ To run `kube-batch`, a Kubernetes cluster must start up. Here is a document on [
 
 ### (1) kube-batch image
 
-An official kube-batch image is provided and you can download it from [DockerHub](https://hub.docker.com/r/kubesigs/kube-batch/). The version is `v0.2` now.
+An official kube-batch image is provided and you can download it from [DockerHub](https://hub.docker.com/r/kubesigs/kube-batch/). The version is `v0.4` now.
 
 ```bash
-# docker pull  kubesigs/kube-batch:v0.2
+# docker pull kubesigs/kube-batch:v0.4
 ```
 
 ### (2) Create a Kubernetes Deployment for kube-batch
@@ -27,7 +27,7 @@ An official kube-batch image is provided and you can download it from [DockerHub
 # git clone http://github.com/kubernetes-sigs/kube-batch
 ```
 
-#### Deploys `kube-batch` by Helm
+#### Deploy `kube-batch` by Helm
 
 Run the `kube-batch` as kubernetes scheduler
 
@@ -40,10 +40,10 @@ Verify the release
 ```bash
 # helm list
 NAME        	REVISION	UPDATED                 	STATUS  	CHART                	NAMESPACE
-dozing-otter	1       	Thu Jun 14 18:52:15 2018	DEPLOYED	kube-batch-0.2.0    	kube-system
+dozing-otter	1       	Thu Jun 14 18:52:15 2018	DEPLOYED	kube-batch-0.4.0    	kube-system
 ```
 
-NOTE: `kube-batch` need to collect cluster information(such as Pod, Node, CRD, etc) for scheduing, so the service account used by the deployment must have permission to access those cluster resources, otherwise, `kube-batch` will fail to startup. For users who are not familiar with Kubernetes RBAC, please copy the example/role.yaml into `$GOPATH/src/github.com/kubernetes-sigs/kube-batch/deployment/kube-batch/templates/` and reinstall batch.
+NOTE: `kube-batch` need to collect cluster information(such as Pod, Node, CRD, etc) for scheduling, so the service account used by the deployment must have permission to access those cluster resources, otherwise, `kube-batch` will fail to startup. For users who are not familiar with Kubernetes RBAC, please copy the example/role.yaml into `$GOPATH/src/github.com/kubernetes-sigs/kube-batch/deployment/kube-batch/templates/` and reinstall batch.
 
 ### (3) Create a Job
 
@@ -81,7 +81,7 @@ spec:
   minMember: 6
 ```
 
-The yaml file means a Job named `qj-01` to create 6 pods(it is specified by `parallelism`), these pods will be scheduled by scheduler `kube-batch` (it is specified by `schedulerName`). `kube-batch` will watch `PodGroup`, and the annotation `scheduling.k8s.io/group-name` identify which group the pod belongs to. `kube-batch` will start `.spec.numMember` pods for a Job at the same time; otherwise, such as resources are not sufficient, `kube-batch` will not start any pods for the Job.
+The yaml file means a Job named `qj-01` to create 6 pods(it is specified by `parallelism`), these pods will be scheduled by scheduler `kube-batch` (it is specified by `schedulerName`). `kube-batch` will watch `PodGroup`, and the annotation `scheduling.k8s.io/group-name` identify which group the pod belongs to. `kube-batch` will start `.spec.minMember` pods for a Job at the same time; otherwise, such as resources are not sufficient, `kube-batch` will not start any pods for the Job.
 
 Create the Job
 
@@ -106,7 +106,7 @@ Check the pods status
 
 ## 4. Create PriorityClass for Pod
 
-`kar-scheduler` will start pods by their priority in the same QueueJob, pods with higher priority will start first. Here is sample to show `PriorityClass` usage:
+`kube-batch` scheduler will start pods by their priority in the same QueueJob, pods with higher priority will start first. Here is sample to show `PriorityClass` usage:
 
 Create a `priority_1000.yaml` with the following contents:
 

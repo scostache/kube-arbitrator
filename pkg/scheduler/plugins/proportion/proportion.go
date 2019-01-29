@@ -25,7 +25,6 @@ import (
 )
 
 type proportionPlugin struct {
-	args          *framework.PluginArgs
 	totalResource *api.Resource
 	queueOpts     map[api.QueueID]*queueAttr
 }
@@ -41,12 +40,15 @@ type queueAttr struct {
 	request   *api.Resource
 }
 
-func New(args *framework.PluginArgs) framework.Plugin {
+func New() framework.Plugin {
 	return &proportionPlugin{
-		args:          args,
 		totalResource: api.EmptyResource(),
 		queueOpts:     map[api.QueueID]*queueAttr{},
 	}
+}
+
+func (pp *proportionPlugin) Name() string {
+	return "proportion"
 }
 
 func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
@@ -60,11 +62,11 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		pp.totalResource.Sub(task.Resreq)
 	}
 
-	glog.V(3).Infof("The total resource is <%v>", pp.totalResource)
+	glog.V(4).Infof("The total resource is <%v>", pp.totalResource)
 
 	// Build attributes for Queues.
 	for _, job := range ssn.Jobs {
-		glog.V(3).Infof("Considering Job <%s/%s>.", job.Namespace, job.Name)
+		glog.V(4).Infof("Considering Job <%s/%s>.", job.Namespace, job.Name)
 
 		if _, found := pp.queueOpts[job.Queue]; !found {
 			queue := ssn.QueueIndex[job.Queue]
@@ -78,7 +80,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 				request:   api.EmptyResource(),
 			}
 			pp.queueOpts[job.Queue] = attr
-			glog.V(3).Infof("Added Queue <%s> attributes.", job.Queue)
+			glog.V(4).Infof("Added Queue <%s> attributes.", job.Queue)
 		}
 
 		for status, tasks := range job.TaskStatusIndex {
@@ -116,7 +118,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		// Calculates the deserved of each Queue.
 		deserved := api.EmptyResource()
 		for _, attr := range pp.queueOpts {
-			glog.V(3).Infof("Considering Queue <%s>: weight <%d>, total weight <%d>.",
+			glog.V(4).Infof("Considering Queue <%s>: weight <%d>, total weight <%d>.",
 				attr.name, attr.weight, totalWeight)
 			if _, found := meet[attr.queueID]; found {
 				continue
@@ -129,7 +131,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 			}
 			pp.updateShare(attr)
 
-			glog.V(3).Infof("The attributes of queue <%s> in proportion: deserved <%v>, allocate <%v>, request <%v>, share <%0.2f>",
+			glog.V(4).Infof("The attributes of queue <%s> in proportion: deserved <%v>, allocate <%v>, request <%v>, share <%0.2f>",
 				attr.name, attr.deserved, attr.allocated, attr.request, attr.share)
 
 			deserved.Add(attr.deserved)
@@ -141,7 +143,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		}
 	}
 
-	ssn.AddQueueOrderFn(func(l, r interface{}) int {
+	ssn.AddQueueOrderFn(pp.Name(), func(l, r interface{}) int {
 		lv := l.(*api.QueueInfo)
 		rv := r.(*api.QueueInfo)
 
@@ -156,7 +158,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		return 1
 	})
 
-	ssn.AddReclaimableFn(func(reclaimer *api.TaskInfo, reclaimees []*api.TaskInfo) []*api.TaskInfo {
+	ssn.AddReclaimableFn(pp.Name(), func(reclaimer *api.TaskInfo, reclaimees []*api.TaskInfo) []*api.TaskInfo {
 		var victims []*api.TaskInfo
 		allocations := map[api.QueueID]*api.Resource{}
 
@@ -183,7 +185,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		return victims
 	})
 
-	ssn.AddOverusedFn(func(obj interface{}) bool {
+	ssn.AddOverusedFn(pp.Name(), func(obj interface{}) bool {
 		queue := obj.(*api.QueueInfo)
 		attr := pp.queueOpts[queue.UID]
 
@@ -199,17 +201,17 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 
 			pp.updateShare(attr)
 
-			glog.V(3).Infof("Proportion AllocateFunc: task <%v/%v>, resreq <%v>,  share <%v>",
+			glog.V(4).Infof("Proportion AllocateFunc: task <%v/%v>, resreq <%v>,  share <%v>",
 				event.Task.Namespace, event.Task.Name, event.Task.Resreq, attr.share)
 		},
-		EvictFunc: func(event *framework.Event) {
+		DeallocateFunc: func(event *framework.Event) {
 			job := ssn.JobIndex[event.Task.Job]
 			attr := pp.queueOpts[job.Queue]
 			attr.allocated.Sub(event.Task.Resreq)
 
 			pp.updateShare(attr)
 
-			glog.V(3).Infof("Proportion EvictFunc: task <%v/%v>, resreq <%v>,  share <%v>",
+			glog.V(4).Infof("Proportion EvictFunc: task <%v/%v>, resreq <%v>,  share <%v>",
 				event.Task.Namespace, event.Task.Name, event.Task.Resreq, attr.share)
 		},
 	})

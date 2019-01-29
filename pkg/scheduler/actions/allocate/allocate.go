@@ -54,7 +54,7 @@ func (alloc *allocateAction) Execute(ssn *framework.Session) {
 			queues.Push(queue)
 		}
 
-		glog.V(3).Infof("Added Job <%s/%s> into Queue <%s>", job.Namespace, job.Name, job.Queue)
+		glog.V(4).Infof("Added Job <%s/%s> into Queue <%s>", job.Namespace, job.Name, job.Queue)
 		jobsMap[job.Queue].Push(job)
 	}
 
@@ -78,7 +78,7 @@ func (alloc *allocateAction) Execute(ssn *framework.Session) {
 		glog.V(3).Infof("Try to allocate resource to Jobs in Queue <%v>", queue.Name)
 
 		if !found || jobs.Empty() {
-			glog.V(3).Infof("Can not find jobs for queue %s.", queue.Name)
+			glog.V(4).Infof("Can not find jobs for queue %s.", queue.Name)
 			continue
 		}
 
@@ -86,6 +86,13 @@ func (alloc *allocateAction) Execute(ssn *framework.Session) {
 		if _, found := pendingTasks[job.UID]; !found {
 			tasks := util.NewPriorityQueue(ssn.TaskOrderFn)
 			for _, task := range job.TaskStatusIndex[api.Pending] {
+				// Skip BestEffort task in 'allocate' action.
+				if task.Resreq.IsEmpty() {
+					glog.V(4).Infof("Task <%v/%v> is BestEffort task, skip it.",
+						task.Namespace, task.Name)
+					continue
+				}
+
 				tasks.Push(task)
 			}
 			pendingTasks[job.UID] = tasks
@@ -102,6 +109,13 @@ func (alloc *allocateAction) Execute(ssn *framework.Session) {
 			glog.V(3).Infof("There are <%d> nodes for Job <%v/%v>",
 				len(ssn.Nodes), job.Namespace, job.Name)
 
+			//any task that doesn't fit will be the last processed
+			//within this loop context so any existing contents of
+			//NodesFitDelta are for tasks that eventually did fit on a
+			//node
+			if len(job.NodesFitDelta) > 0 {
+				job.NodesFitDelta = make(api.NodeResourceMap)
+			}
 			for _, node := range ssn.Nodes {
 				glog.V(3).Infof("Considering Task <%v/%v> on node <%v>: <%v> vs. <%v>",
 					task.Namespace, task.Name, node.Name, task.Resreq, node.Idle)
@@ -124,6 +138,12 @@ func (alloc *allocateAction) Execute(ssn *framework.Session) {
 					}
 					assigned = true
 					break
+				} else {
+					//store information about missing resources
+					job.NodesFitDelta[node.Name] = node.Idle.Clone()
+					job.NodesFitDelta[node.Name].FitDelta(task.Resreq)
+					glog.V(3).Infof("Predicates failed for task <%s/%s> on node <%s> with limited resources",
+						task.Namespace, task.Name, node.Name)
 				}
 
 				// Allocate releasing resource to the task if any.
@@ -143,10 +163,11 @@ func (alloc *allocateAction) Execute(ssn *framework.Session) {
 
 			if assigned {
 				jobs.Push(job)
+				// Handle one assigned task in each loop.
+				break
 			}
 
-			// Handle one pending task in each loop.
-			break
+			// If current task is not assgined, try to fit all rest tasks.
 		}
 
 		// Added Queue back until no job in Queue.

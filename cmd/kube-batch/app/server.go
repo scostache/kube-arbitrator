@@ -17,6 +17,7 @@ limitations under the License.
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -24,7 +25,9 @@ import (
 	"github.com/golang/glog"
 	"github.com/kubernetes-sigs/kube-batch/cmd/kube-batch/app/options"
 	"github.com/kubernetes-sigs/kube-batch/pkg/scheduler"
-	"k8s.io/api/core/v1"
+	"github.com/kubernetes-sigs/kube-batch/pkg/version"
+
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -42,6 +45,7 @@ const (
 	leaseDuration = 15 * time.Second
 	renewDeadline = 10 * time.Second
 	retryPeriod   = 5 * time.Second
+	apiVersion    = "v1alpha1"
 )
 
 func buildConfig(master, kubeconfig string) (*rest.Config, error) {
@@ -52,12 +56,14 @@ func buildConfig(master, kubeconfig string) (*rest.Config, error) {
 }
 
 func Run(opt *options.ServerOption) error {
+	if opt.PrintVersion {
+		version.PrintVersionAndExit(apiVersion)
+	}
+
 	config, err := buildConfig(opt.Master, opt.Kubeconfig)
 	if err != nil {
 		return err
 	}
-
-	neverStop := make(chan struct{})
 
 	// Start policy controller to allocate resources.
 	sched, err := scheduler.NewScheduler(config, opt.SchedulerName,
@@ -66,13 +72,13 @@ func Run(opt *options.ServerOption) error {
 		panic(err)
 	}
 
-	run := func(stopCh <-chan struct{}) {
-		sched.Run(stopCh)
-		<-stopCh
+	run := func(ctx context.Context) {
+		sched.Run(ctx.Done())
+		<-ctx.Done()
 	}
 
 	if !opt.EnableLeaderElection {
-		run(neverStop)
+		run(context.TODO())
 		return fmt.Errorf("finished without leader elect")
 	}
 
@@ -105,7 +111,7 @@ func Run(opt *options.ServerOption) error {
 		return fmt.Errorf("couldn't create resource lock: %v", err)
 	}
 
-	leaderelection.RunOrDie(leaderelection.LeaderElectionConfig{
+	leaderelection.RunOrDie(context.TODO(), leaderelection.LeaderElectionConfig{
 		Lock:          rl,
 		LeaseDuration: leaseDuration,
 		RenewDeadline: renewDeadline,

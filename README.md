@@ -2,14 +2,18 @@
 
 [![Build Status](https://travis-ci.org/kubernetes-sigs/kube-batch.svg?branch=master)](https://travis-ci.org/kubernetes-sigs/kube-batch)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubernetes-sigs/kube-batch)](https://goreportcard.com/report/github.com/kubernetes-sigs/kube-batch)
+[![RepoSize](https://img.shields.io/github/repo-size/kubernetes-sigs/kube-batch.svg)](https://github.com/kubernetes-sigs/kube-batch)
+[![Release](https://img.shields.io/github/release/kubernetes-sigs/kube-batch.svg)](https://github.com/kubernetes-sigs/kube-batch/releases)
+[![LICENSE](https://img.shields.io/github/license/kubernetes-sigs/kube-batch.svg)](https://github.com/kubernetes-sigs/kube-batch/blob/master/LICENSE)
 
-`kube-batch` is batch scheduler built on Kubernetes, providing mechanisms for the applications which would like to run batch jobs in Kubernetes.
 
-`kube-batch` builds upon a decade and a half of experience on running batch workloads at scale using several systems, combined with best-of-breed ideas and practices from the community.
+`kube-batch` is a batch scheduler for Kubernetes, providing mechanisms for applications which would like to run batch jobs leveraging Kubernetes. 
+
+`kube-batch` builds upon a decade and a half of experience on running batch workloads at scale using several systems, combined with best-of-breed ideas and practices from the open source community.
 
 Refer to [tutorial](doc/usage/tutorial.md) on how to use `kube-batch` to run batch job in Kubernetes
 
-## Overall Architect
+## Overall Architecture
 
 ![kube-batch](doc/images/kube-batch.png)
 
